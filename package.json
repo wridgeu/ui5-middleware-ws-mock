@@ -1,0 +1,83 @@
+{
+	"name": "ui5-middleware-ws-mock",
+	"version": "0.0.0",
+	"description": "UI5 server middleware that mocks WebSocket endpoints with optional SAP PCP v1.0 support, alongside the rest of the ui5 serve stack.",
+	"keywords": [
+		"middleware",
+		"mock",
+		"pcp",
+		"ui5",
+		"websocket"
+	],
+	"homepage": "https://github.com/wridgeu/ui5-middleware-ws-mock#readme",
+	"bugs": {
+		"url": "https://github.com/wridgeu/ui5-middleware-ws-mock/issues"
+	},
+	"license": "MIT",
+	"author": "Marco Beier",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/wridgeu/ui5-middleware-ws-mock.git"
+	},
+	"files": [
+		"dist/",
+		"src/",
+		"ui5.yaml",
+		"README.md",
+		"LICENSE",
+		"CHANGELOG.md"
+	],
+	"type": "module",
+	"main": "dist/middleware.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/middleware.js"
+		},
+		"./types": {
+			"types": "./dist/types.d.ts"
+		}
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"scripts": {
+		"clean": "rimraf --glob dist coverage *.tsbuildinfo",
+		"build": "tsc -p tsconfig.json",
+		"fmt": "oxfmt .",
+		"fmt:check": "oxfmt --check .",
+		"lint": "oxlint --tsconfig tsconfig.json --import-plugin --deny-warnings",
+		"lint:fix": "oxlint --tsconfig tsconfig.json --import-plugin --fix",
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"check": "npm run fmt:check && npm run lint && npm run typecheck",
+		"test": "vitest run --coverage",
+		"test:watch": "vitest",
+		"pack:check": "npm pack --dry-run",
+		"commitlint": "commitlint --last",
+		"prepare": "husky"
+	},
+	"dependencies": {
+		"ui5-utils-express": "^1.5.1",
+		"ws": "^8.20.0"
+	},
+	"devDependencies": {
+		"@commitlint/cli": "^20.5.3",
+		"@commitlint/config-conventional": "^20.5.3",
+		"@types/node": "^22.19.17",
+		"@types/ws": "^8.18.1",
+		"@vitest/coverage-v8": "^4.1.5",
+		"husky": "^9.1.7",
+		"lint-staged": "^16.4.0",
+		"oxfmt": "^0.47.0",
+		"oxlint": "^1.62.0",
+		"release-please": "^17.6.0",
+		"rimraf": "^6.1.3",
+		"typescript": "~6.0.0",
+		"vitest": "^4.1.5"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

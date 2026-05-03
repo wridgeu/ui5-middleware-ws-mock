@@ -1,0 +1,7 @@
+{
+	"*.{ts,js,mjs,cjs}": [
+		"oxlint --fix --tsconfig tsconfig.json --import-plugin --deny-warnings",
+		"oxfmt"
+	],
+	"*.{json,md,yaml,yml}": "oxfmt"
+}

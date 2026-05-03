@@ -1,0 +1,24 @@
+{
+	"$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+	"changelog-sections": [
+		{ "type": "feat", "section": "Features" },
+		{ "type": "fix", "section": "Bug Fixes" },
+		{ "type": "refactor", "section": "Code Refactoring" },
+		{ "type": "perf", "section": "Performance Improvements" },
+		{ "type": "docs", "section": "Documentation", "hidden": true },
+		{ "type": "chore", "section": "Miscellaneous", "hidden": true },
+		{ "type": "test", "section": "Tests", "hidden": true },
+		{ "type": "ci", "section": "CI", "hidden": true },
+		{ "type": "style", "section": "Style", "hidden": true }
+	],
+	"packages": {
+		".": {
+			"release-type": "node",
+			"package-name": "ui5-middleware-ws-mock",
+			"include-component-in-tag": false,
+			"bump-minor-pre-major": true,
+			"draft": false,
+			"prerelease": false
+		}
+	}
+}

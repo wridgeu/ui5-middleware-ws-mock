@@ -1,0 +1,62 @@
+# Default: any file that git auto-detects as text is normalized to LF in
+# both the index and the working tree. This overrides each contributor's
+# local `core.autocrlf` setting, so a Windows checkout gets the same line
+# endings a Linux checkout does and line-ending noise stops leaking into
+# diffs, blames, and CI.
+* text=auto eol=lf
+
+# Source files: force LF explicitly so there's no ambiguity even for new
+# extensions that the `text=auto` heuristic might not recognize.
+*.ts       text eol=lf
+*.tsx      text eol=lf
+*.js       text eol=lf
+*.mjs      text eol=lf
+*.cjs      text eol=lf
+*.jsx      text eol=lf
+*.json     text eol=lf
+*.jsonc    text eol=lf
+*.yaml     text eol=lf
+*.yml      text eol=lf
+*.md       text eol=lf
+*.mdx      text eol=lf
+*.css      text eol=lf
+*.less     text eol=lf
+*.scss     text eol=lf
+*.html     text eol=lf
+*.xml      text eol=lf
+*.svg      text eol=lf
+*.properties text eol=lf
+*.sh       text eol=lf
+*.bash     text eol=lf
+
+# Husky hook scripts must stay LF on every platform: git refuses to run
+# hooks that begin with a CRLF shebang on POSIX shells, and lint-staged /
+# typecheck would silently stop firing on pre-commit.
+.husky/**  text eol=lf
+
+# Windows-native scripts: keep CRLF so cmd.exe / PowerShell execute them.
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+*.ps1      text eol=crlf
+
+# Binary assets: never normalize, never show in textual diffs.
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.webp     binary
+*.pdf      binary
+*.zip      binary
+*.gz       binary
+*.tgz      binary
+*.woff     binary
+*.woff2    binary
+*.ttf      binary
+*.eot      binary
+
+# Lock files: LF, but mark as generated so GitHub collapses them by default
+# in diff views and they don't inflate PR reviews.
+package-lock.json text eol=lf linguist-generated=true
+yarn.lock         text eol=lf linguist-generated=true
+pnpm-lock.yaml    text eol=lf linguist-generated=true

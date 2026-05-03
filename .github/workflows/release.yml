@@ -1,0 +1,59 @@
+name: Release
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            force-publish:
+                description: "Force npm publish (bypass release_created check)"
+                type: boolean
+                default: false
+
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
+
+permissions:
+    contents: write
+    pull-requests: write
+    id-token: write
+
+jobs:
+    ci:
+        uses: ./.github/workflows/ci.yml
+
+    release-please:
+        needs: ci
+        runs-on: ubuntu-latest
+        outputs:
+            release_created: ${{ steps.release.outputs.release_created }}
+        steps:
+            - uses: googleapis/release-please-action@v4
+              id: release
+              with:
+                  config-file: release-please-config.json
+                  manifest-file: .release-please-manifest.json
+
+    publish:
+        needs: [release-please, ci]
+        if: needs.release-please.outputs.release_created == 'true' || inputs.force-publish == true
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        permissions:
+            contents: read
+            id-token: write
+        steps:
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+              with:
+                  node-version: 22
+                  cache: npm
+                  registry-url: https://registry.npmjs.org
+
+            - run: npm ci
+
+            - run: npm run build
+
+            - run: NODE_AUTH_TOKEN="" npm publish --provenance --access public

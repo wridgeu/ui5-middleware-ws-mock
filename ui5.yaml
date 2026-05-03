@@ -1,0 +1,7 @@
+specVersion: "4.0"
+metadata:
+    name: ui5-middleware-ws-mock
+kind: extension
+type: server-middleware
+middleware:
+    path: dist/middleware.js
