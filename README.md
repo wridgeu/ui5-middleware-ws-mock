@@ -11,9 +11,6 @@
 
 A UI5 custom server middleware that mocks WebSocket endpoints alongside the rest of the `ui5 serve` stack. It registers under `customMiddleware` in `ui5.yaml`, hooks the underlying HTTP server's `upgrade` event, optionally negotiates the SAP Push Channel Protocol (PCP) `v10.pcp.sap.com` subprotocol, and routes each WebSocket connection to a per-route handler module supplied by the consuming application.
 
-> [!IMPORTANT]
-> **Tooling requirements: Node >= 22.18.** The minimum is enforced via the package's `engines` field; npm aborts installation on older runtimes. The lower bound exists because `.ts` handler modules are loaded through Node's native type stripping, which is unflagged in 22.18 and later releases. Consumers running older Node should restrict handlers to `.js` / `.mjs`, or load `ui5 serve` under an external loader such as `tsx` or `ts-node`.
-
 The transport is plain WebSocket. When the client offers it, the middleware also speaks WebSocket framed under SAP's PCP v1.0 subprotocol. The middleware does not impose a payload contract beyond that wire layer: handlers may exchange JSON, plain text, base64, or any other payload format with their clients. One optional convention, **action routing**, is layered on top to simplify the common named-message-to-callback pattern; it is opt-in and documented in its own section below.
 
 > [!NOTE]
