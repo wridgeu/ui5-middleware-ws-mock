@@ -1,5 +1,5 @@
-import { createServer, type Server } from "http";
-import type { AddressInfo } from "net";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 
 type HookCallback = (args: { server: Server; app?: unknown; options?: unknown }) => void;
 

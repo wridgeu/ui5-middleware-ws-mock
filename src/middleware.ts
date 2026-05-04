@@ -17,9 +17,9 @@
  * `ws.protocol` after the handshake decides per-connection encoding mode.
  */
 
-import { resolve } from "path";
-import { pathToFileURL } from "url";
-import type { Server } from "http";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import type { IncomingMessage, Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 // @ts-expect-error -- ui5-utils-express ships no type declarations; the module is a thin
 // server-listening hook that returns a UI5-compatible middleware factory.
@@ -115,7 +115,7 @@ async function loadHandler(projectRoot: string, route: WebSocketRoute): Promise<
  */
 function createContext(
 	ws: WebSocket,
-	req: import("http").IncomingMessage,
+	req: IncomingMessage,
 	mode: "pcp" | "plain",
 	prefix: string,
 	baseLog: FactoryParameters["log"],
@@ -242,7 +242,7 @@ function invoke(name: string, ctx: WebSocketContext, fn: () => void | Promise<vo
  */
 function attachConnection(
 	ws: WebSocket,
-	req: import("http").IncomingMessage,
+	req: IncomingMessage,
 	loaded: LoadedRoute,
 	baseLog: FactoryParameters["log"],
 ): void {

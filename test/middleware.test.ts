@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { resolve as resolvePath } from "path";
+import { resolve as resolvePath } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import {
 	startServer,
