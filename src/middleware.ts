@@ -134,11 +134,11 @@ function createContext(
 		}
 		let wire: string;
 		try {
-			const serialized = frame.data === undefined ? "" : JSON.stringify(frame.data ?? null);
 			if (mode === "pcp") {
 				// Spec-aligned PCP: `action` is a custom header field, the
 				// body carries the payload. No JSON envelope wrapping.
-				wire = encode({ fields: { action: frame.action }, body: serialized });
+				const body = frame.data === undefined ? "" : JSON.stringify(frame.data ?? null);
+				wire = encode({ fields: { action: frame.action }, body });
 			} else {
 				// Plain WebSocket has no header channel, so we serialize the
 				// routing info into the body using the library's default
@@ -184,9 +184,9 @@ function createContext(
 function decodeFrame(raw: string, mode: "pcp" | "plain"): WebSocketInboundFrame {
 	if (mode === "pcp") {
 		// Spec-aligned PCP: the application-level routing `action` arrives
-		// as a custom PCP header field; the body is the payload. Parse the
-		// body as JSON when it looks like JSON, otherwise expose it as the
-		// raw string. No JSON-envelope-in-body heuristic.
+		// as a custom PCP header field; the body is the payload. Best-effort
+		// `JSON.parse` on the body, falling back to the raw string on parse
+		// failure. No JSON-envelope-in-body heuristic.
 		const { pcpFields, body } = decode(raw);
 		const action = pcpFields["action"];
 		const data = parseBodyPayload(body);
@@ -320,9 +320,13 @@ export default async function wsMock({ log, options, middlewareUtil }: FactoryPa
 			);
 		}
 	}
-	const byPath = new Map<string, LoadedRoute>(
-		loaded.map((entry) => [entry.route.mountPath, entry]),
-	);
+	const byPath = new Map<string, LoadedRoute>();
+	for (const entry of loaded) {
+		if (byPath.has(entry.route.mountPath)) {
+			log.warn(`[ws-mock] duplicate mountPath ${entry.route.mountPath}; later route wins`);
+		}
+		byPath.set(entry.route.mountPath, entry);
+	}
 
 	return hook("ui5-middleware-ws-mock", ({ server }: HookCallbackArgs) => {
 		const wss = new WebSocketServer({

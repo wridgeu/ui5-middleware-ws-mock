@@ -28,8 +28,13 @@ const PCP_BODY_TYPE = "pcp-body-type";
 const DEFAULT_ACTION = "MESSAGE";
 const DEFAULT_BODY_TYPE = "text";
 
-/** Placeholder used while unescaping to avoid double-substituting `\\` sequences. */
-const UNESCAPE_PLACEHOLDER = "";
+/**
+ * Placeholder (U+0008 BACKSPACE) used while unescaping to avoid
+ * double-substituting `\\` sequences. Written as the explicit `\u0008`
+ * escape because the literal character is invisible in most editors and
+ * easy to delete by accident.
+ */
+const UNESCAPE_PLACEHOLDER = "\u0008";
 
 /** WebSocket subprotocol identifier for PCP v1.0. */
 export const SUBPROTOCOL = "v10.pcp.sap.com";

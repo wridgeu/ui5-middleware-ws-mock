@@ -189,11 +189,11 @@ The same handler code works in both modes. Frames that do not fit the action-rou
 
 `WebSocketInboundFrame` (passed to `onMessage`):
 
-| Field    | Type                  | Description                                                                                                               |
-| -------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `action` | `string \| undefined` | Decoded action name when the frame carries one under the convention; otherwise `undefined`.                               |
-| `data`   | `unknown`             | Decoded payload. `undefined` when the frame has no body. JSON-parsed when the body looks like JSON, raw string otherwise. |
-| `raw`    | `string`              | Raw frame body as it arrived on the wire.                                                                                 |
+| Field    | Type                  | Description                                                                                                                                     |
+| -------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `action` | `string \| undefined` | Decoded action name when the frame carries one under the convention; otherwise `undefined`.                                                     |
+| `data`   | `unknown`             | Decoded payload. `undefined` when the frame has no body. Best-effort `JSON.parse` of the body, falling back to the raw string on parse failure. |
+| `raw`    | `string`              | Raw frame body as it arrived on the wire.                                                                                                       |
 
 Per-mode contract:
 

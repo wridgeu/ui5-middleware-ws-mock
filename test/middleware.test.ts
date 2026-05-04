@@ -121,9 +121,9 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notif`);
-		const ready = waitForMessages(ws, 1);
+		const hello = waitForMessages(ws, 1);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
-		await ready;
+		await hello;
 
 		const pong = waitForMessages(ws, 1);
 		ws.send(JSON.stringify({ action: "PING", data: { n: 7 } }));
@@ -428,6 +428,41 @@ describe("ws-mock middleware", () => {
 		expect(listening).toBeDefined();
 	});
 
+	it("warns when duplicate mountPaths are declared and the later route wins", async () => {
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{ mountPath: "/ws/dup", handler: "test/fixtures/handlers/echo.ts" },
+						{
+							mountPath: "/ws/dup",
+							handler: "test/fixtures/handlers/notifications.ts",
+						},
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+		fireHook(serverHandle.server);
+
+		const warning = entries.find(
+			(e) => e.level === "warn" && String(e.args.join(" ")).includes("duplicate mountPath"),
+		);
+		expect(warning).toBeDefined();
+
+		// The later route (notifications.ts) wins. Its onConnect sends HELLO,
+		// not echo.ts's READY, so observing HELLO confirms the override.
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/dup`);
+		const first = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		const messages = await first;
+		expect(messages[0]).toContain('"action":"HELLO"');
+
+		ws.close();
+	});
+
 	it("warns when configuration is omitted entirely", async () => {
 		const { log, entries } = createCapturedLogger();
 		await wsMock({
@@ -458,8 +493,8 @@ describe("ws-mock middleware", () => {
 	});
 
 	it("PCP mode: passes through bodies that look like JSON but fail to parse", async () => {
-		// Body starting with "{" matches the looksLikeJson rule but does not parse.
-		// parseBodyPayload's catch returns the raw body; echo.ts replies with it.
+		// Body starts with "{" but is not valid JSON; parseBodyPayload's catch
+		// returns the raw body and echo.ts replies with it unchanged.
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
 		fireHook(serverHandle.server);
@@ -487,7 +522,7 @@ describe("ws-mock middleware", () => {
 		await new Promise<void>((resolve) => ws.once("open", resolve));
 		await ready;
 
-		// Body is a JSON number; first char "4" matches the digit rule.
+		// Body is a JSON scalar (number); parseBodyPayload returns it as 42.
 		const reply = waitForMessages(ws, 1);
 		ws.send("pcp-action:MESSAGE\npcp-body-type:text\naction:ECHO\n\n42");
 		const replyMsgs = await reply;
