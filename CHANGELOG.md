@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.1.0...v0.1.1) (2026-05-04)
+
+
+### Code Refactoring
+
+* drop redundant non-null assertions and casts in dispatch ([e23b1f6](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/e23b1f67070016cfa2cc3b84fa58a60bae626f33))
+
 ## 0.1.0 (2026-05-04)
 
 
