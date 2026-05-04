@@ -16,6 +16,7 @@
 			"release-type": "node",
 			"package-name": "ui5-middleware-ws-mock",
 			"include-component-in-tag": false,
+			"initial-version": "0.1.0",
 			"bump-minor-pre-major": true,
 			"draft": false,
 			"prerelease": false
