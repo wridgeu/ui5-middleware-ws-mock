@@ -17,7 +17,7 @@
 	"author": "Marco Beier",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/wridgeu/ui5-middleware-ws-mock.git"
+		"url": "git+https://github.com/wridgeu/ui5-middleware-ws-mock.git"
 	},
 	"files": [
 		"dist/",
@@ -39,8 +39,7 @@
 		}
 	},
 	"publishConfig": {
-		"access": "public",
-		"provenance": true
+		"access": "public"
 	},
 	"scripts": {
 		"clean": "rimraf --glob dist coverage *.tsbuildinfo",
@@ -51,8 +50,9 @@
 		"lint:fix": "oxlint --tsconfig tsconfig.json --import-plugin --fix",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"check": "npm run fmt:check && npm run lint && npm run typecheck",
-		"test": "vitest run --coverage",
+		"test": "vitest run",
 		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
 		"pack:check": "npm pack --dry-run",
 		"commitlint": "commitlint --last",
 		"prepare": "husky"

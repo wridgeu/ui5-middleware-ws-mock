@@ -39,7 +39,7 @@ jobs:
 
             - run: npm run build
 
-            - run: npm test
+            - run: npm run test:coverage
 
             - name: Pack check
               run: npm run pack:check
