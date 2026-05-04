@@ -225,10 +225,8 @@ function parseBodyPayload(body: string): unknown {
 function invoke(name: string, ctx: WebSocketContext, fn: () => void | Promise<void>): void {
 	try {
 		const result = fn();
-		if (result && typeof (result as Promise<void>).then === "function") {
-			(result as Promise<void>).catch((err: unknown) =>
-				ctx.log.error(`${name} rejected:`, err),
-			);
+		if (result && typeof result.then === "function") {
+			result.catch((err: unknown) => ctx.log.error(`${name} rejected:`, err));
 		}
 	} catch (err) {
 		ctx.log.error(`${name} threw:`, err);
@@ -254,36 +252,36 @@ function attachConnection(
 	}
 	const mode: "pcp" | "plain" = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
 	const ctx = createContext(ws, req, mode, prefix, baseLog);
-	const handler = loaded.handler;
+	const { onConnect, onMessage, onClose, actions } = loaded.handler;
 
 	ctx.log.info(`connect (mode=${mode})`);
 
-	if (handler.onConnect) {
-		invoke("onConnect", ctx, () => handler.onConnect!(ctx));
+	if (onConnect) {
+		invoke("onConnect", ctx, () => onConnect(ctx));
 	}
 
 	ws.on("message", (payload) => {
 		const raw = typeof payload === "string" ? payload : payload.toString("utf8");
 		const frame = decodeFrame(raw, mode);
 
-		if (frame.action && handler.actions?.[frame.action]) {
-			invoke(`action:${frame.action}`, ctx, () =>
-				handler.actions![frame.action!]!(ctx, frame.data),
-			);
+		const action = frame.action;
+		const actionHandler = action ? actions?.[action] : undefined;
+		if (action && actionHandler) {
+			invoke(`action:${action}`, ctx, () => actionHandler(ctx, frame.data));
 			return;
 		}
-		if (handler.onMessage) {
-			invoke("onMessage", ctx, () => handler.onMessage!(ctx, frame));
+		if (onMessage) {
+			invoke("onMessage", ctx, () => onMessage(ctx, frame));
 			return;
 		}
-		ctx.log.debug(`dropped frame (action=${frame.action ?? "(none)"})`);
+		ctx.log.debug(`dropped frame (action=${action ?? "(none)"})`);
 	});
 
 	ws.on("close", (code, reasonBuf) => {
 		const reason = reasonBuf ? reasonBuf.toString("utf8") : "";
 		ctx.log.info(`close ${code} ${reason}`);
-		if (handler.onClose) {
-			invoke("onClose", ctx, () => handler.onClose!(ctx, code, reason));
+		if (onClose) {
+			invoke("onClose", ctx, () => onClose(ctx, code, reason));
 		}
 	});
 
