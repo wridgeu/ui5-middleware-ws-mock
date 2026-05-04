@@ -296,7 +296,11 @@ function attachConnection(
  * callback. The returned middleware is otherwise a pass-through; WebSocket
  * upgrade requests bypass the HTTP middleware chain entirely.
  */
-export default async function wsMock({ log, options, middlewareUtil }: FactoryParameters) {
+export default async function wsMock({
+	log,
+	options,
+	middlewareUtil,
+}: FactoryParameters): Promise<unknown> {
 	const routes = options.configuration?.routes ?? [];
 	if (routes.length === 0) {
 		log.warn("[ws-mock] no routes configured; middleware is a no-op");

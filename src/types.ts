@@ -65,8 +65,19 @@ export interface WebSocketLog {
  * decodes cleanly in the current mode. `raw` is always present.
  */
 export interface WebSocketInboundFrame {
+	/**
+	 * Decoded routing key. Populated when the frame carries an `action` under
+	 * the action-routing convention; `undefined` for frames that do not.
+	 */
 	action?: string;
+	/**
+	 * Decoded payload. `undefined` when the frame has no body. In PCP mode
+	 * the body is parsed best-effort as JSON, falling back to the raw string
+	 * on parse failure. In plain mode the body is the `data` value from the
+	 * `{ action, data }` envelope.
+	 */
 	data?: unknown;
+	/** Raw frame body as it arrived on the wire. Always present. */
 	raw: string;
 }
 
@@ -126,5 +137,9 @@ export interface WebSocketRoute {
 
 /** The `configuration:` block expected under the custom middleware entry. */
 export interface WebSocketMiddlewareConfiguration {
+	/**
+	 * One entry per mounted WebSocket endpoint. Each route declares its mount
+	 * path and the handler module that drives it.
+	 */
 	routes: WebSocketRoute[];
 }
