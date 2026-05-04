@@ -11,5 +11,3 @@
 ### Bug Fixes
 
 * warn on duplicate mountPath and tidy review findings ([5352049](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/5352049bf6579ae764d0a3145375458eb32e129a))
-
-## Changelog
