@@ -16,6 +16,9 @@ A UI5 custom server middleware that mocks WebSocket endpoints alongside the rest
 
 The transport is plain WebSocket. When the client offers it, the middleware also speaks WebSocket framed under SAP's PCP v1.0 subprotocol. The middleware does not impose a payload contract beyond that wire layer: handlers may exchange JSON, plain text, base64, or any other payload format with their clients. One optional convention, **action routing**, is layered on top to simplify the common named-message-to-callback pattern; it is opt-in and documented in its own section below.
 
+> [!NOTE]
+> Much of this repository was authored hands-off, through speech-to-text dictation paired with AI coding assistance, during post-surgery recovery with only one hand. That said, the majority of the implementation is grounded in pre-existing patterns from the UI5 ecosystem (notably Peter Muessig's work credited below) and conventional Node / WebSocket / PCP techniques that were ported, refactored, and hardened. It was partially "vibe-coded". There can be hallucinations missed during review or simple consumption-side bugs; no software is perfect. Feel free to open an issue or a PR and fix them directly.
+
 ## What it does
 
 - Listens for HTTP upgrade requests on the paths declared in `ui5.yaml`.
