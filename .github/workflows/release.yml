@@ -20,11 +20,7 @@ permissions:
     id-token: write
 
 jobs:
-    ci:
-        uses: ./.github/workflows/ci.yml
-
     release-please:
-        needs: ci
         runs-on: ubuntu-latest
         outputs:
             release_created: ${{ steps.release.outputs.release_created }}
@@ -36,7 +32,7 @@ jobs:
                   manifest-file: .release-please-manifest.json
 
     publish:
-        needs: [release-please, ci]
+        needs: release-please
         if: needs.release-please.outputs.release_created == 'true' || inputs.force-publish == true
         runs-on: ubuntu-latest
         timeout-minutes: 10
