@@ -44,8 +44,8 @@
 	"scripts": {
 		"clean": "rimraf --glob dist coverage *.tsbuildinfo",
 		"build": "tsc -p tsconfig.json",
-		"fmt": "oxfmt .",
-		"fmt:check": "oxfmt --check .",
+		"fmt": "oxfmt --ignore-path .oxfmtignore .",
+		"fmt:check": "oxfmt --ignore-path .oxfmtignore --check .",
 		"lint": "oxlint --tsconfig tsconfig.json --import-plugin --deny-warnings",
 		"lint:fix": "oxlint --tsconfig tsconfig.json --import-plugin --fix",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
