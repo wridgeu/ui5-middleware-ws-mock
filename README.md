@@ -3,7 +3,7 @@
   <a href="https://www.npmjs.com/package/ui5-middleware-ws-mock"><img src="https://img.shields.io/npm/v/ui5-middleware-ws-mock.svg" alt="npm"></a>
   <a href="https://npmx.dev/package/ui5-middleware-ws-mock"><img src="https://img.shields.io/npm/v/ui5-middleware-ws-mock?label=npmx.dev&color=0a0a0a" alt="npmx"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%E2%89%A522.18-green.svg" alt="Node"></a>
-  <a href="https://ui5.github.io/cli/stable/pages/Configuration/"><img src="https://img.shields.io/badge/specVersion-4.0-blue.svg" alt="UI5 specVersion"></a>
+  <a href="https://ui5.github.io/cli/stable/pages/Configuration/"><img src="https://img.shields.io/badge/UI5%20Tooling%20specVersion-4.0-blue.svg" alt="UI5 Tooling specVersion"></a>
   <a href="https://www.npmjs.com/package/@ui5/cli"><img src="https://img.shields.io/badge/%40ui5%2Fcli-%E2%89%A54.0.0-blue.svg" alt="UI5 CLI"></a>
 </p>
 
