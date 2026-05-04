@@ -395,6 +395,12 @@ The cost is the coupling to the hook trick. A future UI5 tooling major bump that
 - [`ui5-utils-express/lib/hook.js`](https://github.com/ui5-community/ui5-ecosystem-showcase/blob/main/packages/ui5-utils-express/lib/hook.js): the helper used to obtain the underlying HTTP server.
 - [`ui5-lib-misc-util` § websocket](https://github.com/wridgeu/ui5-lib-misc-util/blob/main/packages/lib/README.md#websocket): an example UI5 client that talks to this middleware. The middleware is transport-agnostic and works with any WebSocket client; this is one such client.
 
+## Contributing
+
+Issues and pull requests are welcome. Anything goes: bug reports, feature ideas, questions about the design, or notes from using the middleware in a real project. For larger changes, a quick issue first to sketch the approach avoids wasted work.
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (enforced via `commitlint`). Before submitting a PR, run `npm run check` to cover formatting, linting, and type-checks, and `npm test` for the vitest suite.
+
 ## Credits
 
 > [!NOTE]
