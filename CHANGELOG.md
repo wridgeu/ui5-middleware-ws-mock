@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.1.0...v0.1.1) (2026-05-04)
+
+
+### Bug Fixes
+
+* **ci:** wire .oxfmtignore into oxfmt scripts ([44af25e](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/44af25e0451db3d5885a817be71f8a0176b0e0cf))
+
 ## 0.1.0 (2026-05-04)
 
 
