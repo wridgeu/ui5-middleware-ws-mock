@@ -51,22 +51,23 @@ The transport is plain WebSocket. When the client offers it, the middleware also
               afterMiddleware: compression
               configuration:
                   routes:
-                      - mountPath: /ws/notifications
-                        handler: ./wsmock/wsdata/notifications.ts
+                      - mountPath: /ws/foo
+                        handler: ./wsmock/handlers/foo.ts
     ```
+
+    Clients connect to `ws://<host>:<port><mountPath>`. `handler` resolves relative to the directory containing `ui5.yaml`.
 
     The middleware's `kind: extension` declaration ships in the package and is auto-discovered by `@ui5/server`; no separate extension file is required in the consuming application.
 
-3. Write a handler module. `default`-export a `WebSocketHandler`:
+3. Write a handler module at `./wsmock/handlers/foo.ts`. `default`-export a `WebSocketHandler`:
 
     ```typescript
-    // wsmock/wsdata/notifications.ts
     import type { WebSocketHandler } from "ui5-middleware-ws-mock";
 
     const handler: WebSocketHandler = {
     	onConnect: (ctx) => ctx.send({ action: "HELLO", data: {} }),
     	actions: {
-    		PING: (ctx, data) => ctx.send({ action: "PONG", data }),
+    		FOO_REQUEST: (ctx, data) => ctx.send({ action: "FOO_REPLY", data }),
     	},
     	onClose: (ctx, code) => ctx.log.info(`close ${code}`),
     };
@@ -74,7 +75,14 @@ The transport is plain WebSocket. When the client offers it, the middleware also
     export default handler;
     ```
 
-4. Run `npm start`. The server log prints `[ws-mock:/ws/notifications] handler loaded from ./wsmock/wsdata/notifications.ts` followed by `[ws-mock] listening for upgrades on: /ws/notifications`.
+    The handler runs in the `ui5 serve` Node process; action names like `FOO_REQUEST` are application-defined.
+
+4. Run `npm start`. The server log prints one pair of lines per configured route:
+
+    ```text
+    [ws-mock:/ws/foo] handler loaded from ./wsmock/handlers/foo.ts
+    [ws-mock] listening for upgrades on: /ws/foo
+    ```
 
 > [!TIP]
 > **Restart `ui5 serve` after editing configuration or handlers.** Livereload covers `webapp/`-side code only. Changes to `ui5.yaml` (new routes, renamed mount paths) and changes to handler modules are picked up at the next server boot. To automate this, run `ui5 serve` under a process supervisor such as `tsx watch` or `nodemon --watch <handlers-dir>`.
@@ -83,30 +91,30 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 
 The `configuration` block under the `customMiddleware` entry accepts:
 
-| Key                  | Type               | Required | Description                                                                                                                                                          |
-| -------------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `routes`             | `WebSocketRoute[]` | yes      | One entry per mount path. Each entry declares a path and the file that provides the handler module.                                                                  |
-| `routes[].mountPath` | `string`           | yes      | Path such as `/ws/notifications`. Matched against the upgrade request pathname literally; no parameter patterns. Clients connect to `ws://<host>:<port><mountPath>`. |
-| `routes[].handler`   | `string`           | yes      | Path to the handler module, resolved relative to the directory containing `ui5.yaml`. Exactly one handler per route.                                                 |
+| Key                  | Type               | Required | Description                                                                                                                                                |
+| -------------------- | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `routes`             | `WebSocketRoute[]` | yes      | One entry per mount path. Each entry declares a path and the file that provides the handler module.                                                        |
+| `routes[].mountPath` | `string`           | yes      | Path such as `/ws/foo`. Matched against the upgrade request pathname literally; no parameter patterns. Clients connect to `ws://<host>:<port><mountPath>`. |
+| `routes[].handler`   | `string`           | yes      | Path to the handler module, resolved relative to the directory containing `ui5.yaml`. Exactly one handler per route.                                       |
 
 A minimal single-route configuration:
 
 ```yaml
 configuration:
     routes:
-        - mountPath: /ws/notifications
-          handler: ./wsmock/wsdata/notifications.ts
+        - mountPath: /ws/foo
+          handler: ./wsmock/handlers/foo.ts
 ```
 
-Multiple routes in the same middleware entry are supported:
+Multiple routes in the same middleware entry are supported. Each route loads its own handler module:
 
 ```yaml
 configuration:
     routes:
-        - mountPath: /ws/notifications
-          handler: ./wsmock/wsdata/notifications.ts
-        - mountPath: /ws/events
-          handler: ./wsmock/wsdata/events.ts
+        - mountPath: /ws/foo
+          handler: ./wsmock/handlers/foo.ts
+        - mountPath: /ws/bar
+          handler: ./wsmock/handlers/bar.ts
 ```
 
 ## Wire layer: WebSocket and PCP
@@ -172,13 +180,13 @@ If the underlying logger does not implement `debug` (older `@ui5/logger` version
 ### `ctx.send(frame)`
 
 ```typescript
-ctx.send({ action: "PONG", data: { t: 42 } });
+ctx.send({ action: "FOO_REPLY", data: { t: 42 } });
 ```
 
 `ctx.send` is the action-routing convention's outbound counterpart. The payload is wrapped in the mode-appropriate wire format:
 
 - **PCP mode.** A PCP frame with `pcp-action:MESSAGE`, the application-level `action:<name>` custom header field, and the JSON-serialized `data` as the body. The body carries the payload; the routing metadata lives in header fields, per the PCP v1.0 spec. Byte-compatible with `SapPcpWebSocket`.
-- **Plain mode.** The JSON envelope `{ "action": "PONG", "data": { "t": 42 } }`. Plain `WebSocket` has no header channel, so the routing key is folded into the body.
+- **Plain mode.** The JSON envelope `{ "action": "FOO_REPLY", "data": { "t": 42 } }`. Plain `WebSocket` has no header channel, so the routing key is folded into the body.
 
 The same handler code works in both modes. Frames that do not fit the action-routing shape can be sent through the raw escape hatch `ctx.ws.send(...)` directly.
 
@@ -206,19 +214,22 @@ The handler API is intentionally minimal. Custom logic lives entirely inside the
 Per-connection state belongs in a `WeakMap` keyed by `ctx`; the entry is collected automatically when the connection ends.
 
 ```typescript
-const state = new WeakMap<WebSocketContext, { pings: number }>();
+const state = new WeakMap<WebSocketContext, { count: number }>();
 
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
-		state.set(ctx, { pings: 0 });
+		state.set(ctx, { count: 0 });
 		ctx.send({ action: "HELLO", data: {} });
 	},
 	actions: {
-		PING: (ctx, data) => {
+		FOO_BUMP: (ctx, data) => {
 			const s = state.get(ctx);
 			if (!s) return;
-			s.pings += 1;
-			ctx.send({ action: "PONG", data: { ...(data as object), n: s.pings } });
+			s.count += 1;
+			ctx.send({
+				action: "FOO_BUMPED",
+				data: { ...(data as object), n: s.count },
+			});
 		},
 	},
 };
@@ -237,8 +248,8 @@ const handler: WebSocketHandler = {
 		subscribers.delete(ctx);
 	},
 	actions: {
-		BROADCAST: (_ctx, data) => {
-			for (const sub of subscribers) sub.send({ action: "EVENT", data });
+		FOO_BROADCAST: (_ctx, data) => {
+			for (const sub of subscribers) sub.send({ action: "FOO_EVENT", data });
 		},
 	},
 };
@@ -250,7 +261,7 @@ const handler: WebSocketHandler = {
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
 		const timer = setInterval(() => {
-			ctx.send({ action: "TICK", data: { at: Date.now() } });
+			ctx.send({ action: "FOO_TICK", data: { at: Date.now() } });
 		}, 1000);
 		ctx.ws.on("close", () => clearInterval(timer));
 	},
@@ -260,21 +271,34 @@ const handler: WebSocketHandler = {
 ### Simulating backend latency
 
 ```typescript
-actions: {
-    SLOW_READ: async (ctx, data) => {
-        await new Promise((r) => setTimeout(r, 500));
-        ctx.send({ action: "SLOW_READ_ACK", data });
-    },
+// inside `actions`
+FOO_SLOW: async (ctx, data) => {
+	await new Promise((r) => setTimeout(r, 500));
+	ctx.send({ action: "FOO_SLOW_ACK", data });
 },
 ```
 
 ### Forcing disconnects for retry-strategy testing
 
 ```typescript
-actions: {
-    DISCONNECT: (ctx) => ctx.close(1001, "requested"),  // clean close, client sees 1001
-    TERMINATE:  (ctx) => ctx.terminate(),               // abrupt, client sees 1006
-},
+// inside `actions`
+FOO_DISCONNECT: (ctx) => ctx.close(1001, "requested"), // clean close, client sees 1001
+FOO_TERMINATE: (ctx) => ctx.terminate(),               // abrupt, client sees 1006
+```
+
+### Catch-all logging alongside `actions`
+
+`actions` handles known message names; `onMessage` runs for anything that does not match a key in `actions` (per the dispatch precedence above). Combining the two is useful while a contract is still in flux: known traffic is served, unknown traffic is logged instead of silently dropped.
+
+```typescript
+const handler: WebSocketHandler = {
+	actions: {
+		FOO: (ctx, data) => ctx.send({ action: "FOO_ACK", data }),
+	},
+	onMessage: (ctx, frame) => {
+		ctx.log.warn(`unhandled action=${frame.action ?? "(none)"} raw=${frame.raw}`);
+	},
+};
 ```
 
 ### Opting out of action routing
