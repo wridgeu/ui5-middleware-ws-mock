@@ -1,7 +1,7 @@
 import type { WebSocketHandler } from "../../../src/types.js";
 
 /**
- * Handler with no `onMessage`. Inbound frames hit the drop-with-debug-log
+ * Handler with no `onMessage`. Inbound frames hit the drop-with-verbose-log
  * path inside the middleware.
  */
 const handler: WebSocketHandler = {

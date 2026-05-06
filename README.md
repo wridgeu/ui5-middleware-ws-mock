@@ -148,23 +148,23 @@ export interface PcpFrame {
 }
 ```
 
-All callbacks are optional. A handler that only implements `onMessage` is valid; so is a handler that only implements `onConnect` (e.g. a periodic-push fixture that never reads inbound traffic). Frames that arrive when no `onMessage` is defined are dropped with a debug log. Any callback may be `async`; the middleware awaits returned promises and logs rejections through `ctx.log.error` without closing the connection.
+All callbacks are optional. A handler that only implements `onMessage` is valid; so is a handler that only implements `onConnect` (e.g. a periodic-push fixture that never reads inbound traffic). Frames that arrive when no `onMessage` is defined are dropped with a `verbose` log. Any callback may be `async`; the middleware awaits returned promises and logs rejections through `ctx.log.error` without closing the connection.
 
 ### `WebSocketContext`
 
 Every callback receives a `WebSocketContext` (defined in [`src/types.ts`](src/types.ts)):
 
-| Field       | Type                        | Description                                                                                                                                   |
-| ----------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ws`        | `WebSocket`                 | Raw `ws` instance. Required for any framing the helper methods do not cover (custom PCP actions, binary body-type, additional header fields). |
-| `req`       | `http.IncomingMessage`      | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                |
-| `mode`      | `"pcp" \| "plain"`          | Negotiated at the handshake. Handlers branch on this to interpret `message` and to pick an outbound framing strategy.                         |
-| `log`       | `WebSocketLog`              | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods: `info`, `warn`, `error`, `debug`.                                               |
-| `send`      | `(message: string) => void` | Send a text message. Plain mode writes the bytes through `ws.send` unchanged; PCP mode wraps them in a default frame. See below.              |
-| `close`     | `(code?, reason?) => void`  | Close the connection with optional code (default 1000) and reason.                                                                            |
-| `terminate` | `() => void`                | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                |
+| Field       | Type                        | Description                                                                                                                                           |
+| ----------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ws`        | `WebSocket`                 | Raw `ws` instance. Required for any framing the helper methods do not cover (custom PCP actions, binary body-type, additional header fields).         |
+| `req`       | `http.IncomingMessage`      | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                        |
+| `mode`      | `"pcp" \| "plain"`          | Negotiated at the handshake. Handlers branch on this to interpret `message` and to pick an outbound framing strategy.                                 |
+| `log`       | `WebSocketLog`              | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`. |
+| `send`      | `(message: string) => void` | Send a text message. Plain mode writes the bytes through `ws.send` unchanged; PCP mode wraps them in a default frame. See below.                      |
+| `close`     | `(code?, reason?) => void`  | Close the connection with optional code (default 1000) and reason.                                                                                    |
+| `terminate` | `() => void`                | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                        |
 
-If the underlying logger does not implement `debug` (older `@ui5/logger` versions), debug calls land at `info` level. Consumers can filter by the `[ws-mock:<mountPath>]` prefix or by log message content.
+Method names mirror `@ui5/logger`'s level names (`silly`, `verbose`, `perf`, `info`, `warn`, `error`). Consumers can filter by the `[ws-mock:<mountPath>]` prefix or by log message content.
 
 ### `ctx.send(message)`
 
@@ -250,7 +250,7 @@ const handler: WebSocketHandler = {
 		}
 		const fn = action ? actions[action] : undefined;
 		if (fn) fn(ctx, body);
-		else ctx.log.debug(`unhandled action=${action ?? "(none)"}`);
+		else ctx.log.verbose(`unhandled action=${action ?? "(none)"}`);
 	},
 };
 
