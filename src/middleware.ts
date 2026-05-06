@@ -136,18 +136,13 @@ function createContext(
 			log.warn(`send on non-open socket (state=${ws.readyState})`);
 			return;
 		}
-		let wire: string;
-		try {
-			// In PCP mode the helper wraps `message` in a default frame
-			// (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra fields).
-			// Custom PCP framing (other actions, binary body-type, additional
-			// header fields) is the handler's job via `encode()` and
-			// `ctx.ws.send`.
-			wire = mode === "pcp" ? encode({ body: message }) : message;
-		} catch (err) {
-			log.error("send failed:", err);
-			return;
-		}
+		// In PCP mode the helper wraps `message` in a default frame
+		// (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra fields).
+		// `encode()` only throws on empty field names, which this call site
+		// cannot produce, so the call is unguarded. Custom PCP framing
+		// (other actions, binary body-type, additional header fields) is
+		// the handler's job via `encode()` and `ctx.ws.send`.
+		const wire = mode === "pcp" ? encode({ body: message }) : message;
 		try {
 			ws.send(wire);
 		} catch (err) {
