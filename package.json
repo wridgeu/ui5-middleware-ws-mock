@@ -1,6 +1,6 @@
 {
 	"name": "ui5-middleware-ws-mock",
-	"version": "0.1.1",
+	"version": "0.2.0",
 	"description": "UI5 server middleware that mocks WebSocket endpoints with optional SAP PCP v1.0 support, alongside the rest of the ui5 serve stack.",
 	"keywords": [
 		"middleware",
