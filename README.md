@@ -11,7 +11,7 @@
 
 A UI5 custom server middleware that mocks WebSocket endpoints alongside the rest of the `ui5 serve` stack. It registers under `customMiddleware` in `ui5.yaml`, hooks the underlying HTTP server's `upgrade` event, optionally negotiates the SAP Push Channel Protocol (PCP) `v10.pcp.sap.com` subprotocol, and routes each WebSocket connection to a per-route handler module supplied by the consuming application.
 
-The transport is plain WebSocket. When the client offers it, the middleware also speaks WebSocket framed under SAP's PCP v1.0 subprotocol. The middleware does not impose a payload contract beyond that wire layer: handlers may exchange JSON, plain text, base64, or any other payload format with their clients. One optional convention, **action routing**, is layered on top to simplify the common named-message-to-callback pattern; it is opt-in and documented in its own section below.
+The transport is plain WebSocket. When the client offers it, the middleware also speaks WebSocket framed under SAP's PCP v1.0 subprotocol. The middleware is transport-only beyond that wire layer: plain frames pass through as raw bytes, PCP frames are decoded into header fields and a body, and any payload semantics (JSON, base64, line-delimited records, opaque text) are entirely the handler's choice.
 
 > [!NOTE]
 > Much of this repository was authored hands-off, through speech-to-text dictation paired with AI coding assistance, during post-surgery recovery with only one hand. That said, the majority of the implementation is grounded in pre-existing patterns from the UI5 ecosystem (notably Peter Muessig's work credited below) and conventional Node / WebSocket / PCP techniques that were ported, refactored, and hardened. It was partially "vibe-coded". There can be hallucinations missed during review or simple consumption-side bugs; no software is perfect. Feel free to open an issue or a PR and fix them directly.
@@ -19,10 +19,10 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 ## What it does
 
 - Listens for HTTP upgrade requests on the paths declared in `ui5.yaml`.
-- Negotiates the PCP v1.0 subprotocol when the client offers it; otherwise runs in plain WebSocket mode. Handlers see `ctx.mode` but write mode-agnostic code.
+- Negotiates the PCP v1.0 subprotocol when the client offers it; otherwise runs in plain WebSocket mode. Handlers see `ctx.mode` and branch on it where needed.
 - Loads one handler module per route at startup (TypeScript or JavaScript).
-- Decodes inbound frames per mode and dispatches them via the optional action-routing convention, falling back to a catch-all `onMessage` for anything else.
-- Encodes outbound frames in PCP or plain JSON envelope per connection, byte-compatible with `sap.ui.core.ws.SapPcpWebSocket`.
+- Forwards every inbound frame to the handler's `onMessage`. In plain mode the handler receives the raw frame string; in PCP mode it receives a decoded `{ fields, body }` object with the wire bytes preserved verbatim.
+- Provides `ctx.send(message)` for the common case of writing a string. In PCP mode the helper wraps the string in a default frame (`pcp-action:MESSAGE`, `pcp-body-type:text`); for any other PCP shape the handler builds the wire string with the exported `encode()` and calls `ctx.ws.send` directly.
 - Logs handler failures, malformed frames, and non-open-socket sends without crashing `ui5 serve` or the connection.
 
 ## What it does not do
@@ -31,7 +31,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 - Does not support multiple handler modules per route. Each route resolves to exactly one handler file. Composition belongs inside the handler module.
 - Does not support dynamic or parametrized mount paths. `mountPath` is matched against the request pathname literally. UI5-style route patterns with optional or mandatory parameters (`{param}`, `:optional?`, etc.) are not supported. Per-resource routing should be derived from `req.url` inside the handler.
 - Does not persist state across server restarts.
-- Does not mock any specific business protocol. The action-routing shape is a convention, not a contract; payload semantics are entirely consumer-defined.
+- Does not impose a payload contract. Named-message dispatch ("action routing"), JSON envelopes, and any other application-level convention are the handler's responsibility — the middleware ships nothing of the kind.
 - Does not proxy to a real backend. For proxying, use [`ui5-middleware-simpleproxy`](https://www.npmjs.com/package/ui5-middleware-simpleproxy) or `fiori-tools-proxy`.
 
 ## Quick start
@@ -65,9 +65,10 @@ The transport is plain WebSocket. When the client offers it, the middleware also
     import type { WebSocketHandler } from "ui5-middleware-ws-mock";
 
     const handler: WebSocketHandler = {
-    	onConnect: (ctx) => ctx.send({ action: "HELLO", data: {} }),
-    	actions: {
-    		FOO_REQUEST: (ctx, data) => ctx.send({ action: "FOO_REPLY", data }),
+    	onConnect: (ctx) => ctx.send("HELLO"),
+    	onMessage: (ctx, message) => {
+    		const body = typeof message === "string" ? message : message.body;
+    		ctx.send(`echo:${body}`);
     	},
     	onClose: (ctx, code) => ctx.log.info(`close ${code}`),
     };
@@ -75,7 +76,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
     export default handler;
     ```
 
-    The handler runs in the `ui5 serve` Node process; action names like `FOO_REQUEST` are application-defined.
+    The handler runs in the `ui5 serve` Node process. `message` is a `string` in plain mode and `{ fields, body }` in PCP mode; the handler narrows on `typeof` (or on `ctx.mode`).
 
 4. Run `npm start`. The server log prints one pair of lines per configured route:
 
@@ -121,30 +122,12 @@ configuration:
 
 The middleware speaks WebSocket. When the connecting client offers the `v10.pcp.sap.com` subprotocol, the middleware also speaks PCP framing. That is the entire wire-level contract.
 
-- **Plain WebSocket.** A frame is whatever bytes the peers exchanged. The middleware imposes no specific shape.
-- **PCP.** Frames are split into header fields and a body, per the [SAP PCP v1.0 spec](https://community.sap.com/t5/application-development-and-automation-blog-posts/specification-of-the-push-channel-protocol-pcp/ba-p/13137541). Negotiation happens once per connection at the handshake; every frame on the connection is PCP-framed in both directions thereafter.
+- **Plain WebSocket.** A frame is whatever bytes the peers exchanged. The middleware imposes no specific shape; `onMessage` receives the raw frame string.
+- **PCP.** Frames are split into header fields and a body, per the [SAP PCP v1.0 spec](https://community.sap.com/t5/application-development-and-automation-blog-posts/specification-of-the-push-channel-protocol-pcp/ba-p/13137541). Negotiation happens once per connection at the handshake; every frame on the connection is PCP-framed in both directions thereafter. `onMessage` receives a decoded `{ fields, body }` object with the body bytes preserved verbatim.
 
-Either mode can carry any payload format (JSON objects, opaque text, base64-encoded bytes, line-delimited records, etc.); the decoded body is forwarded to the handler unchanged.
+Either mode can carry any payload format (JSON objects, opaque text, base64-encoded bytes, line-delimited records, etc.). The middleware never JSON-parses the body, never wraps outbound payloads in an envelope, and never invents routing keys; whatever framing or encoding the peers agree on lives entirely in handler code.
 
-The PCP v1.0 codec is implemented in [`src/pcp.ts`](src/pcp.ts); the `ws` package itself has no PCP awareness.
-
-## Action routing (an opinionated convention, opt-in)
-
-On top of the raw wire, the middleware exposes **one** opinionated convention to simplify the common case of mapping an inbound message name to a callback. The convention is opt-in and entirely optional: handlers that do not declare an `actions` map are unaffected, and a handler may use only `onMessage` to read `frame.raw` and ignore action routing completely.
-
-The convention treats a frame as carrying a routing key called `action`:
-
-- **PCP mode.** `action` is read from the PCP custom header field named `action`.
-- **Plain mode.** `action` is read from a JSON envelope of the form `{ "action": "<name>", "data": <payload> }` placed in the body.
-
-Action routing is not part of WebSocket and not part of PCP; both are pure transport. It is a dispatch layer added by this middleware and reflects one specific opinion about how to structure mock messages. Consumers who prefer a different shape should bypass it and decode `frame.raw` inside `onMessage`. The same `{ action, data }` shape is what `ctx.send` produces in the outbound direction, so a client that speaks the convention sees a symmetric contract on both sides; clients that do not are unaffected.
-
-### Dispatch precedence
-
-1. The middleware decodes the frame per the negotiated `ctx.mode` (PCP or plain).
-2. If the decoded `action` matches a key in `actions`, that callback runs and only that callback. `data` is passed as the second argument.
-3. Otherwise, if `onMessage` is defined, it runs with the full decoded frame (`action`, `data`, `raw`). Useful for catch-all logging or framing the action-routing convention does not cover.
-4. Otherwise the frame is dropped with a debug log.
+The PCP v1.0 codec is implemented in [`src/pcp.ts`](src/pcp.ts) and re-exported from the package root as `encode` / `decode` / `pcpEscape` / `pcpUnescape` / `SUBPROTOCOL`; the `ws` package itself has no PCP awareness.
 
 ## Handler API
 
@@ -153,61 +136,128 @@ A handler module default-exports an object implementing `WebSocketHandler` (defi
 ```typescript
 export interface WebSocketHandler {
 	onConnect?: (ctx: WebSocketContext) => void | Promise<void>;
-	onMessage?: (ctx: WebSocketContext, frame: WebSocketInboundFrame) => void | Promise<void>;
+	onMessage?: (ctx: WebSocketContext, message: InboundMessage) => void | Promise<void>;
 	onClose?: (ctx: WebSocketContext, code: number, reason: string) => void | Promise<void>;
-	actions?: Record<string, (ctx: WebSocketContext, data: unknown) => void | Promise<void>>;
+}
+
+export type InboundMessage = string | PcpFrame;
+
+export interface PcpFrame {
+	fields: Record<string, string>; // includes pcp-action, pcp-body-type
+	body: string; // raw body bytes as utf-8
 }
 ```
 
-All callbacks are optional. A handler that only implements `onMessage` (treating every frame as opaque) is valid; so is a handler that only implements `actions`. Any callback may be `async`; the middleware awaits returned promises and logs rejections through `ctx.log.error` without closing the connection.
+All callbacks are optional. A handler that only implements `onMessage` is valid; so is a handler that only implements `onConnect` (e.g. a periodic-push fixture that never reads inbound traffic). Frames that arrive when no `onMessage` is defined are dropped with a debug log. Any callback may be `async`; the middleware awaits returned promises and logs rejections through `ctx.log.error` without closing the connection.
 
 ### `WebSocketContext`
 
 Every callback receives a `WebSocketContext` (defined in [`src/types.ts`](src/types.ts)):
 
-| Field       | Type                       | Description                                                                                                                            |
-| ----------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `ws`        | `WebSocket`                | Raw `ws` instance. Escape hatch for behavior the helper methods do not cover.                                                          |
-| `req`       | `http.IncomingMessage`     | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                         |
-| `mode`      | `"pcp" \| "plain"`         | Negotiated at the handshake. Handlers rarely need to branch on this; `ctx.send` is mode-agnostic.                                      |
-| `log`       | `WebSocketLog`             | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods: `info`, `warn`, `error`, `debug`.                                        |
-| `send`      | `(frame) => void`          | Send a frame using the action-routing convention. See the shape below. Errors are logged and swallowed; callers never observe a throw. |
-| `close`     | `(code?, reason?) => void` | Close the connection with optional code (default 1000) and reason.                                                                     |
-| `terminate` | `() => void`               | Hard-kill the socket without a close handshake. The client observes code 1006.                                                         |
+| Field       | Type                        | Description                                                                                                                                   |
+| ----------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ws`        | `WebSocket`                 | Raw `ws` instance. Required for any framing the helper methods do not cover (custom PCP actions, binary body-type, additional header fields). |
+| `req`       | `http.IncomingMessage`      | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                |
+| `mode`      | `"pcp" \| "plain"`          | Negotiated at the handshake. Handlers branch on this to interpret `message` and to pick an outbound framing strategy.                         |
+| `log`       | `WebSocketLog`              | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods: `info`, `warn`, `error`, `debug`.                                               |
+| `send`      | `(message: string) => void` | Send a text message. Plain mode writes the bytes through `ws.send` unchanged; PCP mode wraps them in a default frame. See below.              |
+| `close`     | `(code?, reason?) => void`  | Close the connection with optional code (default 1000) and reason.                                                                            |
+| `terminate` | `() => void`                | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                |
 
 If the underlying logger does not implement `debug` (older `@ui5/logger` versions), debug calls land at `info` level. Consumers can filter by the `[ws-mock:<mountPath>]` prefix or by log message content.
 
-### `ctx.send(frame)`
+### `ctx.send(message)`
 
 ```typescript
-ctx.send({ action: "FOO_REPLY", data: { t: 42 } });
+ctx.send("HELLO");
 ```
 
-`ctx.send` is the action-routing convention's outbound counterpart. The payload is wrapped in the mode-appropriate wire format:
+The middleware does not interpret the bytes:
 
-- **PCP mode.** A PCP frame with `pcp-action:MESSAGE`, the application-level `action:<name>` custom header field, and the JSON-serialized `data` as the body. The body carries the payload; the routing metadata lives in header fields, per the PCP v1.0 spec. Byte-compatible with `SapPcpWebSocket`.
-- **Plain mode.** The JSON envelope `{ "action": "FOO_REPLY", "data": { "t": 42 } }`. Plain `WebSocket` has no header channel, so the routing key is folded into the body.
+- **Plain mode.** `message` is written through `ws.send` unchanged.
+- **PCP mode.** `message` is wrapped in a default PCP frame (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra header fields) with `message` as the body.
 
-The same handler code works in both modes. Frames that do not fit the action-routing shape can be sent through the raw escape hatch `ctx.ws.send(...)` directly.
+Non-open sockets and synchronous `ws.send` throws are logged and swallowed; callers never observe a throw.
 
-### Inbound frame decoding
+For PCP frames with a non-default `pcp-action`, a binary body-type, or extra header fields, build the wire string with the exported `encode()` and call `ctx.ws.send` directly:
 
-`WebSocketInboundFrame` (passed to `onMessage`):
+```typescript
+import { encode } from "ui5-middleware-ws-mock";
 
-| Field    | Type                  | Description                                                                                                                                     |
-| -------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `action` | `string \| undefined` | Decoded action name when the frame carries one under the convention; otherwise `undefined`.                                                     |
-| `data`   | `unknown`             | Decoded payload. `undefined` when the frame has no body. Best-effort `JSON.parse` of the body, falling back to the raw string on parse failure. |
-| `raw`    | `string`              | Raw frame body as it arrived on the wire.                                                                                                       |
+ctx.ws.send(
+	encode({
+		action: "EVENT",
+		bodyType: "text",
+		fields: { correlationId: "abc" },
+		body: "payload",
+	}),
+);
+```
 
-Per-mode contract:
+For binary payloads, base64-encode the bytes and set `bodyType: "binary"`:
 
-- **PCP mode.** The decoder reads `action` from the PCP custom header field named `action`. The body is exposed as `data` after a best-effort `JSON.parse`: empty body becomes `undefined`; otherwise the body is JSON-parsed and a parse failure yields the raw string. Structured objects and JSON scalars (`null`, numbers, booleans, strings) decode symmetrically with the plain-mode parser; opaque text or base64 blobs pass through unchanged.
-- **Plain mode.** The decoder parses the body as JSON and expects the envelope `{ action, data }`. `action` must be a string; missing or non-string `action` leaves the frame without a routing key (the handler's `onMessage` continues to receive it via the `raw` field). Missing `data` remains `undefined`.
+```typescript
+ctx.ws.send(encode({ bodyType: "binary", body: someBuffer.toString("base64") }));
+```
+
+### Inbound `message`
+
+`InboundMessage` is `string | PcpFrame`:
+
+- **Plain mode.** `message` is the raw frame body as it arrived on the wire.
+- **PCP mode.** `message` is `{ fields, body }`. `fields` includes `pcp-action`, `pcp-body-type`, and every application-defined header field. `body` is the body bytes as a UTF-8 string with no JSON parsing or other interpretation.
+
+Handlers narrow with `typeof message === "string"` (or `ctx.mode === "plain"`) before reading.
 
 ## Writing handlers for custom scenarios
 
-The handler API is intentionally minimal. Custom logic lives entirely inside the callbacks the handler provides. Common patterns:
+Custom logic lives entirely inside the callbacks the handler provides.
+
+### Named-message dispatch ("action routing") in user-land
+
+The middleware does not ship action routing. If you want a `name → callback` map, build it in two lines on top of `onMessage`:
+
+```typescript
+import { encode } from "ui5-middleware-ws-mock";
+import type { WebSocketHandler, WebSocketContext } from "ui5-middleware-ws-mock";
+
+type Action = (ctx: WebSocketContext, body: string) => void;
+
+const actions: Record<string, Action> = {
+	PING: (ctx, body) => reply(ctx, "PONG", body),
+	BAR: (ctx, body) => reply(ctx, "BAR_REPLY", body),
+};
+
+function reply(ctx: WebSocketContext, action: string, body: string): void {
+	if (ctx.mode === "pcp") {
+		ctx.ws.send(encode({ fields: { action }, body }));
+	} else {
+		ctx.send(`${action}:${body}`); // pick whichever plain-mode framing your client speaks
+	}
+}
+
+const handler: WebSocketHandler = {
+	onMessage: (ctx, message) => {
+		let action: string | undefined;
+		let body: string;
+		if (typeof message === "string") {
+			const idx = message.indexOf(":");
+			action = idx >= 0 ? message.slice(0, idx) : message;
+			body = idx >= 0 ? message.slice(idx + 1) : "";
+		} else {
+			action = message.fields.action;
+			body = message.body;
+		}
+		const fn = action ? actions[action] : undefined;
+		if (fn) fn(ctx, body);
+		else ctx.log.debug(`unhandled action=${action ?? "(none)"}`);
+	},
+};
+
+export default handler;
+```
+
+The plain-mode wire shape (`ACTION:body` here) is whatever your client speaks; pick to match.
 
 ### Stateful per-connection handlers
 
@@ -219,18 +269,13 @@ const state = new WeakMap<WebSocketContext, { count: number }>();
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
 		state.set(ctx, { count: 0 });
-		ctx.send({ action: "HELLO", data: {} });
+		ctx.send("HELLO");
 	},
-	actions: {
-		FOO_BUMP: (ctx, data) => {
-			const s = state.get(ctx);
-			if (!s) return;
-			s.count += 1;
-			ctx.send({
-				action: "FOO_BUMPED",
-				data: { ...(data as object), n: s.count },
-			});
-		},
+	onMessage: (ctx) => {
+		const s = state.get(ctx);
+		if (!s) return;
+		s.count += 1;
+		ctx.send(`count=${s.count}`);
 	},
 };
 ```
@@ -241,16 +286,11 @@ const handler: WebSocketHandler = {
 const subscribers = new Set<WebSocketContext>();
 
 const handler: WebSocketHandler = {
-	onConnect: (ctx) => {
-		subscribers.add(ctx);
-	},
-	onClose: (ctx) => {
-		subscribers.delete(ctx);
-	},
-	actions: {
-		FOO_BROADCAST: (_ctx, data) => {
-			for (const sub of subscribers) sub.send({ action: "FOO_EVENT", data });
-		},
+	onConnect: (ctx) => subscribers.add(ctx),
+	onClose: (ctx) => subscribers.delete(ctx),
+	onMessage: (_ctx, message) => {
+		const body = typeof message === "string" ? message : message.body;
+		for (const sub of subscribers) sub.send(`event:${body}`);
 	},
 };
 ```
@@ -261,7 +301,7 @@ const handler: WebSocketHandler = {
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
 		const timer = setInterval(() => {
-			ctx.send({ action: "FOO_TICK", data: { at: Date.now() } });
+			ctx.send(`tick at ${Date.now()}`);
 		}, 1000);
 		ctx.ws.on("close", () => clearInterval(timer));
 	},
@@ -271,43 +311,23 @@ const handler: WebSocketHandler = {
 ### Simulating backend latency
 
 ```typescript
-// inside `actions`
-FOO_SLOW: async (ctx, data) => {
-	await new Promise((r) => setTimeout(r, 500));
-	ctx.send({ action: "FOO_SLOW_ACK", data });
-},
+const handler: WebSocketHandler = {
+	onMessage: async (ctx, message) => {
+		await new Promise((r) => setTimeout(r, 500));
+		const body = typeof message === "string" ? message : message.body;
+		ctx.send(`ack:${body}`);
+	},
+};
 ```
 
 ### Forcing disconnects for retry-strategy testing
 
 ```typescript
-// inside `actions`
-FOO_DISCONNECT: (ctx) => ctx.close(1001, "requested"), // clean close, client sees 1001
-FOO_TERMINATE: (ctx) => ctx.terminate(),               // abrupt, client sees 1006
-```
-
-### Catch-all logging alongside `actions`
-
-`actions` handles known message names; `onMessage` runs for anything that does not match a key in `actions` (per the dispatch precedence above). Combining the two is useful while a contract is still in flux: known traffic is served, unknown traffic is logged instead of silently dropped.
-
-```typescript
 const handler: WebSocketHandler = {
-	actions: {
-		FOO: (ctx, data) => ctx.send({ action: "FOO_ACK", data }),
-	},
-	onMessage: (ctx, frame) => {
-		ctx.log.warn(`unhandled action=${frame.action ?? "(none)"} raw=${frame.raw}`);
-	},
-};
-```
-
-### Opting out of action routing
-
-```typescript
-const handler: WebSocketHandler = {
-	onMessage: (ctx, frame) => {
-		ctx.log.debug(`raw frame: ${frame.raw}`);
-		ctx.ws.send(`echo:${frame.raw}`);
+	onMessage: (ctx, message) => {
+		const body = typeof message === "string" ? message : message.body;
+		if (body === "DISCONNECT") return ctx.close(1001, "requested"); // clean close
+		if (body === "TERMINATE") return ctx.terminate(); // abrupt; client sees 1006
 	},
 };
 ```
@@ -322,26 +342,24 @@ handleProtocols: (protocols) => (protocols.has("v10.pcp.sap.com") ? "v10.pcp.sap
 
 Clients that offer `v10.pcp.sap.com` receive it back, pinning the connection into PCP mode; encoding and decoding then go through the codec in [`src/pcp.ts`](src/pcp.ts). Clients that offer no subprotocol (plain `WebSocket`) receive no subprotocol back. Clients that offer something else fail their own handshake per RFC 6455 §4.2.2, because no echo is returned for unrecognized subprotocols.
 
-After the handshake, `ws.protocol` is either `"v10.pcp.sap.com"` or `""`, and the middleware snapshots that value into `ctx.mode`. The mode is fixed for the lifetime of the connection. Per-frame branching is not required in handler code.
+After the handshake, `ws.protocol` is either `"v10.pcp.sap.com"` or `""`, and the middleware snapshots that value into `ctx.mode`. The mode is fixed for the lifetime of the connection.
 
 ## Error handling
 
 Every failure site is caught and logged through the route-scoped logger (`[ws-mock:<mountPath>]`). The connection stays open unless the handler explicitly closes it.
 
-| Site                                         | Policy                                                                                               |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `JSON.stringify(data)` in `ctx.send`         | try/catch; log at `error`; drop the frame.                                                           |
-| `pcp.encode(...)` in `ctx.send`              | same try/catch (encoder throws on empty field names per spec).                                       |
-| `ws.send` on a non-open socket               | pre-check `ws.readyState === OPEN`; skip with a `warn` when not.                                     |
-| `ws.send` throws synchronously               | caught around the call; log at `error`; connection is left to close via `ws`'s own error handling.   |
-| Malformed inbound JSON (plain mode)          | synthesize `{ action: undefined, data: undefined, raw }`; `onMessage` receives it.                   |
-| Malformed inbound PCP frame                  | decoder returns partial data; handlers see best-effort `action` / `data`.                            |
-| Handler sync throw                           | caught; log at `error`; connection stays open.                                                       |
-| Handler async rejection                      | `.catch(err => ctx.log.error(...))`; connection stays open.                                          |
-| Dynamic `import(handler)` failure at startup | logged at `error`; the route accepts the upgrade then closes with code 1011 (Internal Server Error). |
+| Site                                         | Policy                                                                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pcp.encode(...)` in `ctx.send`              | try/catch; log at `error`; drop the frame.                                                                                                                   |
+| `ws.send` on a non-open socket               | pre-check `ws.readyState === OPEN`; skip with a `warn` when not.                                                                                             |
+| `ws.send` throws synchronously               | caught around the call; log at `error`; connection is left to close via `ws`'s own error handling.                                                           |
+| Malformed inbound PCP frame                  | decoder returns partial data; `onMessage` sees best-effort `fields` / `body` (empty `fields` if the LFLF separator is missing, mirroring `SapPcpWebSocket`). |
+| Handler sync throw                           | caught; log at `error`; connection stays open.                                                                                                               |
+| Handler async rejection                      | `.catch(err => ctx.log.error(...))`; connection stays open.                                                                                                  |
+| Dynamic `import(handler)` failure at startup | logged at `error`; the route accepts the upgrade then closes with code 1011 (Internal Server Error).                                                         |
 
 > [!NOTE]
-> **Restart the server before debugging.** Handler modules are imported once at startup and cached for the process lifetime; symptoms such as an action that never fires, a route that 404s after a `ui5.yaml` edit, or a handler change that does not appear to take effect are typically resolved by stopping `ui5 serve` and starting it again.
+> **Restart the server before debugging.** Handler modules are imported once at startup and cached for the process lifetime; symptoms such as a route that 404s after a `ui5.yaml` edit, or a handler change that does not appear to take effect, are typically resolved by stopping `ui5 serve` and starting it again.
 
 ## How it works under the hood
 
