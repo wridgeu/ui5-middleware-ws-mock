@@ -350,13 +350,14 @@ Every failure site is caught and logged through the route-scoped logger (`[ws-mo
 
 | Site                                         | Policy                                                                                                                                                       |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pcp.encode(...)` in `ctx.send`              | try/catch; log at `error`; drop the frame.                                                                                                                   |
 | `ws.send` on a non-open socket               | pre-check `ws.readyState === OPEN`; skip with a `warn` when not.                                                                                             |
 | `ws.send` throws synchronously               | caught around the call; log at `error`; connection is left to close via `ws`'s own error handling.                                                           |
 | Malformed inbound PCP frame                  | decoder returns partial data; `onMessage` sees best-effort `fields` / `body` (empty `fields` if the LFLF separator is missing, mirroring `SapPcpWebSocket`). |
 | Handler sync throw                           | caught; log at `error`; connection stays open.                                                                                                               |
 | Handler async rejection                      | `.catch(err => ctx.log.error(...))`; connection stays open.                                                                                                  |
 | Dynamic `import(handler)` failure at startup | logged at `error`; the route accepts the upgrade then closes with code 1011 (Internal Server Error).                                                         |
+
+The default `ctx.send` path does not wrap `encode()` in a try/catch: the only error condition (empty field name) is unreachable from this call site. Handlers that build custom PCP frames via the exported `encode()` are responsible for handling that error themselves if they pass user-controlled field names.
 
 > [!NOTE]
 > **Restart the server before debugging.** Handler modules are imported once at startup and cached for the process lifetime; symptoms such as a route that 404s after a `ui5.yaml` edit, or a handler change that does not appear to take effect, are typically resolved by stopping `ui5 serve` and starting it again.
