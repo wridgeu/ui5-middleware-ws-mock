@@ -1,10 +1,8 @@
 import type { WebSocketHandler } from "../../../src/types.js";
 
 const handler: WebSocketHandler = {
-	actions: {
-		BOOM: () => {
-			throw new Error("synchronous boom");
-		},
+	onMessage: () => {
+		throw new Error("synchronous boom");
 	},
 };
 

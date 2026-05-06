@@ -6,11 +6,11 @@ import type { WebSocket } from "ws";
  *
  * `mode` is snapshot at the WebSocket upgrade based on the subprotocol the
  * server and client negotiated. It does not change for the lifetime of the
- * connection; handlers that need branching behavior (e.g. logging mode) can
- * read it, but `send` / `close` / `terminate` are mode-agnostic.
+ * connection. Handlers branch on it to read inbound messages and to choose
+ * an outbound framing strategy.
  */
 export interface WebSocketContext {
-	/** Raw `ws` instance. Escape hatch for behavior the helper methods do not cover. */
+	/** Raw `ws` instance. Required for any framing the helper methods do not cover. */
 	ws: WebSocket;
 	/** The HTTP upgrade request. Useful for `url`, `headers`, and `socket.remoteAddress`. */
 	req: IncomingMessage;
@@ -19,17 +19,21 @@ export interface WebSocketContext {
 	/** Scoped logger, prefixed with `[ws-mock:<mountPath>]`. */
 	log: WebSocketLog;
 	/**
-	 * Send an action frame to this connection. In `pcp` mode the middleware
-	 * encodes the frame as a PCP message with `action` set as a custom
-	 * header field and the serialized `data` as the body (spec-aligned).
-	 * In `plain` mode the envelope `{ action, data }` is serialized into
-	 * the frame body; the client's default `WebSocketService` parser
-	 * recognizes the same shape.
+	 * Send a text message. The middleware does not interpret the bytes:
 	 *
-	 * Non-open sockets and `JSON.stringify` failures are logged and swallowed;
-	 * callers never see a throw from this method.
+	 *   - plain mode: `message` is written through `ws.send` unchanged.
+	 *   - pcp mode:   `message` is wrapped in a default PCP frame
+	 *                 (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra
+	 *                 header fields) with `message` as the body.
+	 *
+	 * For PCP frames with a non-default `pcp-action`, `pcp-body-type` (e.g.
+	 * `binary`), or extra header fields, build the wire string with the
+	 * exported `encode()` and call `ctx.ws.send(...)` directly.
+	 *
+	 * Non-open sockets and synchronous `ws.send` throws are logged and
+	 * swallowed; callers never see a throw from this method.
 	 */
-	send: (frame: { action: string; data?: unknown }) => void;
+	send: (message: string) => void;
 	/**
 	 * Close the connection with an optional code + reason. The default code
 	 * is 1000 (Normal Closure).
@@ -59,39 +63,40 @@ export interface WebSocketLog {
 }
 
 /**
- * Shape of a decoded inbound frame passed to `onMessage`.
+ * Decoded PCP frame handed to `onMessage` when `ctx.mode === "pcp"`.
  *
- * `action` and `data` are best-effort: they are populated when the frame
- * decodes cleanly in the current mode. `raw` is always present.
+ * `fields` is a flat key/value map of every PCP header field on the wire,
+ * including `pcp-action` and `pcp-body-type`. `body` is the body bytes as a
+ * UTF-8 string; the middleware never JSON-parses or otherwise interprets it.
+ * Application-defined payload semantics (JSON, base64, line-delimited records,
+ * opaque text) are entirely up to the handler.
  */
-export interface WebSocketInboundFrame {
-	/**
-	 * Decoded routing key. Populated when the frame carries an `action` under
-	 * the action-routing convention; `undefined` for frames that do not.
-	 */
-	action?: string;
-	/**
-	 * Decoded payload. `undefined` when the frame has no body. In PCP mode
-	 * the body is parsed best-effort as JSON, falling back to the raw string
-	 * on parse failure. In plain mode the body is the `data` value from the
-	 * `{ action, data }` envelope.
-	 */
-	data?: unknown;
-	/** Raw frame body as it arrived on the wire. Always present. */
-	raw: string;
+export interface PcpFrame {
+	fields: Record<string, string>;
+	body: string;
 }
 
 /**
- * Handler module shape. Consumers export a `WebSocketHandler` as `default` from a
- * file whose path is referenced by the `handler:` entry in the middleware's
- * `configuration.routes`.
+ * Inbound message handed to `onMessage`. The runtime shape is determined by
+ * `ctx.mode`:
  *
- * Dispatch precedence for inbound frames:
- *   1. If the decoded `action` matches a key in `actions`, that callback runs
- *      (and only that callback). `data` is the decoded payload.
- *   2. Otherwise `onMessage` runs if defined, receiving the full decoded
- *      frame plus the raw body.
- *   3. Otherwise the frame is dropped with a debug log.
+ *   - plain: the raw frame string as it arrived on the wire.
+ *   - pcp:   a decoded `{ fields, body }` object.
+ *
+ * Handlers narrow on `ctx.mode` (or `typeof message`) before reading.
+ */
+export type InboundMessage = string | PcpFrame;
+
+/**
+ * Handler module shape. Consumers export a `WebSocketHandler` as `default`
+ * from a file whose path is referenced by the `handler:` entry in the
+ * middleware's `configuration.routes`.
+ *
+ * The middleware is transport-only: it negotiates plain vs. PCP, decodes PCP
+ * frames into `{ fields, body }`, and forwards every inbound frame to
+ * `onMessage`. Application-level routing (named messages → callbacks),
+ * payload encoding (JSON, base64, etc.), and any other contract beyond the
+ * wire layer are the handler's responsibility.
  *
  * Any hook may return a `Promise`; the middleware awaits it and logs
  * rejections via `ctx.log.error`. The connection is not closed on failure
@@ -105,28 +110,24 @@ export interface WebSocketHandler {
 	 */
 	onConnect?: (ctx: WebSocketContext) => void | Promise<void>;
 	/**
-	 * Fallback for inbound frames whose decoded `action` does not match any
-	 * key in `actions`. Receives the decoded frame plus the raw body so the
-	 * handler can opt into custom parsing. Not called when an `actions` entry
-	 * matches.
+	 * Called for every inbound frame on this connection. `message` is the raw
+	 * frame string in plain mode and a decoded `PcpFrame` in PCP mode;
+	 * handlers branch on `ctx.mode` (or `typeof message`) to read it.
+	 *
+	 * Frames that arrive with no `onMessage` defined are dropped with a debug
+	 * log.
 	 */
-	onMessage?: (ctx: WebSocketContext, frame: WebSocketInboundFrame) => void | Promise<void>;
+	onMessage?: (ctx: WebSocketContext, message: InboundMessage) => void | Promise<void>;
 	/**
 	 * Called after the WebSocket is closed (either peer). `code` is the close
 	 * code, `reason` is the utf-8 reason string (empty when none was sent).
 	 */
 	onClose?: (ctx: WebSocketContext, code: number, reason: string) => void | Promise<void>;
-	/**
-	 * Action-name-to-callback map. When an inbound frame's decoded `action`
-	 * matches a key, its callback runs and `onMessage` is not invoked. The
-	 * callback receives the decoded `data` payload as-is.
-	 */
-	actions?: Record<string, (ctx: WebSocketContext, data: unknown) => void | Promise<void>>;
 }
 
 /** Shape of a single entry in the middleware's `configuration.routes` list. */
 export interface WebSocketRoute {
-	/** Express-style mount path, e.g. `/ws/notifications`. */
+	/** Express-style mount path, e.g. `/ws/foo`. */
 	mountPath: string;
 	/**
 	 * Path to the handler module, relative to the project root (the directory

@@ -10,6 +10,7 @@ import {
 } from "./helpers/server.js";
 import { createCapturedLogger } from "./helpers/logger.js";
 import { waitForLog, waitForMessages } from "./helpers/wait.js";
+import { decode, encode } from "../src/pcp.js";
 
 vi.mock("ui5-utils-express/lib/hook.js", () => ({
 	default: (
@@ -70,7 +71,7 @@ describe("ws-mock middleware", () => {
 		expect(listening).toBeDefined();
 	});
 
-	it("round-trips action frames in plain mode", async () => {
+	it("plain mode: ctx.send writes the message verbatim and onMessage receives raw strings", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
 		fireHook(serverHandle.server);
@@ -81,18 +82,17 @@ describe("ws-mock middleware", () => {
 		expect(ws.protocol).toBe("");
 
 		const readyMsgs = await ready;
-		expect(readyMsgs[0]).toContain('"action":"READY"');
+		expect(readyMsgs[0]).toBe("READY");
 
 		const echoBack = waitForMessages(ws, 1);
-		ws.send(JSON.stringify({ action: "PING", data: { n: 1 } }));
+		ws.send("foo");
 		const echoMsgs = await echoBack;
-		expect(echoMsgs[0]).toContain('"action":"ECHO"');
-		expect(echoMsgs[0]).toContain('"n":1');
+		expect(echoMsgs[0]).toBe("ECHO:foo");
 
 		ws.close();
 	});
 
-	it("round-trips action frames in PCP mode", async () => {
+	it("PCP mode: ctx.send wraps in a default PCP frame and onMessage decodes inbound frames", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
 		fireHook(serverHandle.server);
@@ -103,98 +103,77 @@ describe("ws-mock middleware", () => {
 		expect(ws.protocol).toBe("v10.pcp.sap.com");
 
 		const readyMsgs = await ready;
-		expect(readyMsgs[0]).toContain("pcp-action:MESSAGE");
-		expect(readyMsgs[0]).toContain("action:READY");
+		const readyDecoded = decode(readyMsgs[0]!);
+		expect(readyDecoded.pcpFields["pcp-action"]).toBe("MESSAGE");
+		expect(readyDecoded.pcpFields["pcp-body-type"]).toBe("text");
+		expect(readyDecoded.body).toBe("READY");
 
 		const echoBack = waitForMessages(ws, 1);
-		ws.send('pcp-action:MESSAGE\npcp-body-type:text\naction:PING\n\n{"n":1}');
+		ws.send(encode({ fields: { correlationId: "abc" }, body: "foo" }));
 		const echoMsgs = await echoBack;
-		expect(echoMsgs[0]).toContain("action:ECHO");
-		expect(echoMsgs[0]).toContain('"n":1');
+		const echoDecoded = decode(echoMsgs[0]!);
+		expect(echoDecoded.body).toBe("ECHO:foo");
 
 		ws.close();
 	});
 
-	it("dispatches to actions[name] when frame matches", async () => {
-		const args = buildFactoryArgs("test/fixtures/handlers/notifications.ts", "/ws/notif");
+	it("PCP mode: ctx.send body is written verbatim with no JSON quoting", async () => {
+		// Regression: previously ctx.send ran JSON.stringify(data), so a string
+		// payload arrived on the wire wrapped in quotes (`"foo"` instead of
+		// `foo`). The handler now hands `message` straight to ctx.send and the
+		// body bytes are exactly what the handler emitted.
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
 		fireHook(serverHandle.server);
 
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notif`);
-		const hello = waitForMessages(ws, 1);
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
+		const ready = waitForMessages(ws, 1);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
-		await hello;
+		await ready;
 
-		const pong = waitForMessages(ws, 1);
-		ws.send(JSON.stringify({ action: "PING", data: { n: 7 } }));
-		const pongMsgs = await pong;
-		expect(pongMsgs[0]).toContain('"action":"PONG"');
-		expect(pongMsgs[0]).toContain('"n":7');
+		const reply = waitForMessages(ws, 1);
+		ws.send(encode({ body: "foo" }));
+		const replyMsgs = await reply;
+		const decoded = decode(replyMsgs[0]!);
+		expect(decoded.body).toBe("ECHO:foo");
+		expect(decoded.body).not.toContain('"');
 
 		ws.close();
 	});
 
-	it("falls through to onMessage when action does not match", async () => {
-		const args = buildFactoryArgs("test/fixtures/handlers/notifications.ts", "/ws/notif");
+	it("PCP mode: handlers can build custom PCP frames via encode + ctx.ws.send", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
 		fireHook(serverHandle.server);
 
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notif`);
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
+		const ready = waitForMessages(ws, 1);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await ready;
 
-		ws.send(JSON.stringify({ action: "UNKNOWN", data: 1 }));
-		await waitForLog(
-			args.entries,
-			(e) => e.level === "debug" && String(e.args.join(" ")).includes("unhandled frame"),
-		);
+		// Send a frame with custom action and extra fields; verify the handler
+		// sees both via the decoded PcpFrame and that the body round-trips.
+		const reply = waitForMessages(ws, 1);
+		ws.send(encode({ action: "EVENT", fields: { name: "alice" }, body: "payload" }));
+		const replyMsgs = await reply;
+		expect(decode(replyMsgs[0]!).body).toBe("ECHO:payload");
 
 		ws.close();
 	});
 
-	it("drops frames silently when no action match and no onMessage", async () => {
-		// throws-sync.ts has only actions.BOOM and no onMessage, so an unrecognized
-		// action exercises the drop-with-debug-log path. Send a non-JSON payload
-		// so frame.action is undefined and the "(none)" branch runs.
-		const args = buildFactoryArgs("test/fixtures/handlers/throws-sync.ts", "/ws/sboom");
+	it("drops frames silently when no onMessage is defined", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/no-onmessage.ts", "/ws/no-onmessage");
 		await wsMock(args);
 		fireHook(serverHandle.server);
 
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/sboom`);
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/no-onmessage`);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
 
-		ws.send("not-json-no-action");
+		ws.send("hello");
 		await waitForLog(
 			args.entries,
 			(e) => e.level === "debug" && String(e.args.join(" ")).includes("dropped frame"),
 		);
-		await waitForLog(
-			args.entries,
-			(e) => e.level === "debug" && String(e.args.join(" ")).includes("(none)"),
-		);
-		expect(ws.readyState).toBe(WebSocket.OPEN);
-
-		ws.close();
-	});
-
-	it("swallows JSON.stringify errors in ctx.send and keeps the connection alive", async () => {
-		const args = buildFactoryArgs("test/fixtures/handlers/circular-send.ts", "/ws/circ");
-		await wsMock(args);
-		fireHook(serverHandle.server);
-
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/circ`);
-		const okFrame = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
-
-		// The middleware logger is prefix-aware: args[0] is "[ws-mock:<mountPath>]"
-		// and the "send failed" message lands in subsequent args. Match the joined
-		// argument list rather than args[0].
-		await waitForLog(
-			args.entries,
-			(e) => e.level === "error" && String(e.args.join(" ")).includes("send failed"),
-		);
-
-		const msgs = await okFrame;
-		expect(msgs.some((m) => m.includes('"action":"OK"'))).toBe(true);
 		expect(ws.readyState).toBe(WebSocket.OPEN);
 
 		ws.close();
@@ -225,7 +204,7 @@ describe("ws-mock middleware", () => {
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/aboom`);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
 
-		ws.send(JSON.stringify({ action: "BOOM", data: null }));
+		ws.send("trigger");
 		await waitForLog(
 			args.entries,
 			(e) => e.level === "error" && String(e.args.join(" ")).includes("rejected"),
@@ -236,14 +215,14 @@ describe("ws-mock middleware", () => {
 	});
 
 	it("logs sync handler throws without closing the connection", async () => {
-		const args = buildFactoryArgs("test/fixtures/handlers/throws-sync.ts", "/ws/sboom2");
+		const args = buildFactoryArgs("test/fixtures/handlers/throws-sync.ts", "/ws/sboom");
 		await wsMock(args);
 		fireHook(serverHandle.server);
 
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/sboom2`);
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/sboom`);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
 
-		ws.send(JSON.stringify({ action: "BOOM", data: null }));
+		ws.send("trigger");
 		await waitForLog(
 			args.entries,
 			(e) => e.level === "error" && String(e.args.join(" ")).includes("threw"),
@@ -357,13 +336,15 @@ describe("ws-mock middleware", () => {
 		expect(errored).toBe(true);
 	});
 
-	it("invokes onClose with code and reason from a normal close", async () => {
+	it("invokes onClose with code and reason from a clean close", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/notifications.ts", "/ws/notif");
 		await wsMock(args);
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notif`);
+		const hello = waitForMessages(ws, 1);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await hello;
 		ws.close(1000, "bye");
 
 		await waitForLog(
@@ -378,11 +359,13 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notif`);
+		const hello = waitForMessages(ws, 1);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await hello;
 		const closePromise = new Promise<number>((resolve) =>
 			ws.on("close", (code) => resolve(code)),
 		);
-		ws.send(JSON.stringify({ action: "TERMINATE", data: null }));
+		ws.send("TERMINATE");
 		const code = await closePromise;
 		expect(code).toBe(1006);
 
@@ -390,23 +373,6 @@ describe("ws-mock middleware", () => {
 			args.entries,
 			(e) => e.level === "info" && String(e.args.join(" ")).includes("disconnect 1006"),
 		);
-	});
-
-	it("plain mode: treats malformed JSON as a raw-only frame", async () => {
-		const args = buildFactoryArgs("test/fixtures/handlers/notifications.ts", "/ws/notif");
-		await wsMock(args);
-		fireHook(serverHandle.server);
-
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notif`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
-
-		ws.send("not-json-at-all");
-		await waitForLog(
-			args.entries,
-			(e) => e.level === "debug" && String(e.args.join(" ")).includes("(none)"),
-		);
-
-		ws.close();
 	});
 
 	it("warns when no routes are configured", async () => {
@@ -458,7 +424,7 @@ describe("ws-mock middleware", () => {
 		const first = waitForMessages(ws, 1);
 		await new Promise<void>((resolve) => ws.once("open", resolve));
 		const messages = await first;
-		expect(messages[0]).toContain('"action":"HELLO"');
+		expect(messages[0]).toBe("HELLO");
 
 		ws.close();
 	});
@@ -474,61 +440,5 @@ describe("ws-mock middleware", () => {
 			(e) => e.level === "warn" && String(e.args.join(" ")).includes("no routes configured"),
 		);
 		expect(warning).toBeDefined();
-	});
-
-	it("ctx.send produces an empty body when frame.data is omitted", async () => {
-		const args = buildFactoryArgs("test/fixtures/handlers/no-data.ts", "/ws/nd");
-		await wsMock(args);
-		fireHook(serverHandle.server);
-
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/nd`);
-		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
-		const messages = await ready;
-
-		// Plain mode: data property is omitted from JSON.stringify output.
-		expect(messages[0]).toContain('"action":"READY"');
-		expect(messages[0]).not.toContain('"data"');
-		ws.close();
-	});
-
-	it("PCP mode: passes through bodies that look like JSON but fail to parse", async () => {
-		// Body starts with "{" but is not valid JSON; parseBodyPayload's catch
-		// returns the raw body and echo.ts replies with it unchanged.
-		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
-		await wsMock(args);
-		fireHook(serverHandle.server);
-
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
-		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
-		await ready;
-
-		const reply = waitForMessages(ws, 1);
-		ws.send("pcp-action:MESSAGE\npcp-body-type:text\naction:ECHO\n\n{not-json");
-		const replyMsgs = await reply;
-		expect(replyMsgs[0]).toContain("{not-json");
-
-		ws.close();
-	});
-
-	it("PCP mode: decodes scalar JSON bodies", async () => {
-		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
-		await wsMock(args);
-		fireHook(serverHandle.server);
-
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
-		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
-		await ready;
-
-		// Body is a JSON scalar (number); parseBodyPayload returns it as 42.
-		const reply = waitForMessages(ws, 1);
-		ws.send("pcp-action:MESSAGE\npcp-body-type:text\naction:ECHO\n\n42");
-		const replyMsgs = await reply;
-		// echo.ts replies with the data as-is, parsed as JSON number 42.
-		expect(replyMsgs[0]).toContain("42");
-
-		ws.close();
 	});
 });

@@ -15,6 +15,10 @@
  * WebSocketServer construction: if the client offered `v10.pcp.sap.com` we
  * echo it, otherwise we let the connection proceed with no subprotocol.
  * `ws.protocol` after the handshake decides per-connection encoding mode.
+ *
+ * The middleware is transport-only beyond the wire layer: plain frames are
+ * forwarded as raw strings, PCP frames are decoded into `{ fields, body }`.
+ * Application-level routing and payload encoding are the handler's job.
  */
 
 import { resolve } from "node:path";
@@ -26,9 +30,9 @@ import { WebSocketServer, type WebSocket } from "ws";
 import hook from "ui5-utils-express/lib/hook.js";
 
 import type {
+	InboundMessage,
 	WebSocketContext,
 	WebSocketHandler,
-	WebSocketInboundFrame,
 	WebSocketLog,
 	WebSocketMiddlewareConfiguration,
 	WebSocketRoute,
@@ -109,8 +113,8 @@ async function loadHandler(projectRoot: string, route: WebSocketRoute): Promise<
 
 /**
  * Builds the `ctx` object handed to every handler callback. `send` / `close`
- * / `terminate` are self-contained and never throw: stringify failures,
- * closed sockets, and encoder errors are caught here and routed to the
+ * / `terminate` are self-contained and never throw: closed sockets, encoder
+ * errors, and synchronous `ws.send` throws are caught here and routed to the
  * prefix-aware logger.
  */
 function createContext(
@@ -127,33 +131,27 @@ function createContext(
 		debug: (...a: unknown[]) => (baseLog.debug ?? baseLog.info)(prefix, ...a),
 	};
 
-	const send = (frame: { action: string; data?: unknown }): void => {
+	const send = (message: string): void => {
 		if (ws.readyState !== ws.OPEN) {
-			log.warn(`send on non-open socket (state=${ws.readyState}, action=${frame.action})`);
+			log.warn(`send on non-open socket (state=${ws.readyState})`);
 			return;
 		}
 		let wire: string;
 		try {
-			if (mode === "pcp") {
-				// Spec-aligned PCP: `action` is a custom header field, the
-				// body carries the payload. No JSON envelope wrapping.
-				const body = frame.data === undefined ? "" : JSON.stringify(frame.data ?? null);
-				wire = encode({ fields: { action: frame.action }, body });
-			} else {
-				// Plain WebSocket has no header channel, so we serialize the
-				// routing info into the body using the library's default
-				// envelope `{ action, data }` (matches WebSocketService's
-				// default receive-side parser).
-				wire = JSON.stringify({ action: frame.action, data: frame.data });
-			}
+			// In PCP mode the helper wraps `message` in a default frame
+			// (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra fields).
+			// Custom PCP framing (other actions, binary body-type, additional
+			// header fields) is the handler's job via `encode()` and
+			// `ctx.ws.send`.
+			wire = mode === "pcp" ? encode({ body: message }) : message;
 		} catch (err) {
-			log.error(`send failed (action=${frame.action}):`, err);
+			log.error("send failed:", err);
 			return;
 		}
 		try {
 			ws.send(wire);
 		} catch (err) {
-			log.error(`ws.send threw (action=${frame.action}):`, err);
+			log.error("ws.send threw:", err);
 		}
 	};
 
@@ -177,48 +175,20 @@ function createContext(
 }
 
 /**
- * Decodes an inbound frame per the negotiated mode. Malformed input is
- * tolerated: the decoder returns a frame with `raw` populated and
- * `action` / `data` left undefined so `onMessage` can see the raw body.
+ * Decodes an inbound frame per the negotiated mode.
+ *
+ *   - plain: forwarded verbatim as a string.
+ *   - pcp:   `decode()` is best-effort — frames missing the LFLF separator
+ *            land as a body-only `PcpFrame` with empty `fields`, matching
+ *            `SapPcpWebSocket`'s fallback behavior. The middleware does not
+ *            inspect the body.
  */
-function decodeFrame(raw: string, mode: "pcp" | "plain"): WebSocketInboundFrame {
+function decodeMessage(raw: string, mode: "pcp" | "plain"): InboundMessage {
 	if (mode === "pcp") {
-		// Spec-aligned PCP: the application-level routing `action` arrives
-		// as a custom PCP header field; the body is the payload. Best-effort
-		// `JSON.parse` on the body, falling back to the raw string on parse
-		// failure. No JSON-envelope-in-body heuristic.
 		const { pcpFields, body } = decode(raw);
-		const action = pcpFields["action"];
-		const data = parseBodyPayload(body);
-		return { action, data, raw };
+		return { fields: pcpFields, body };
 	}
-	// Plain WebSocket has no header channel, so the envelope `{ action, data }`
-	// is the library's default wire contract for action-routed frames. Missing
-	// keys stay `undefined`; the envelope is not treated as payload.
-	try {
-		const envelope = JSON.parse(raw) as { action?: unknown; data?: unknown };
-		const action = typeof envelope.action === "string" ? envelope.action : undefined;
-		return { action, data: envelope.data, raw };
-	} catch {
-		return { raw };
-	}
-}
-
-/**
- * Best-effort body decoding for PCP frames. Empty body becomes `undefined`;
- * otherwise try `JSON.parse`, falling back to the raw string on parse
- * failure. This decodes structured payloads and JSON scalars (`null`,
- * numbers, booleans, strings) symmetrically with the plain-mode
- * `{ action, data }` parser on the client, and passes opaque text or
- * Base64 blobs through unchanged.
- */
-function parseBodyPayload(body: string): unknown {
-	if (body === "") return undefined;
-	try {
-		return JSON.parse(body);
-	} catch {
-		return body;
-	}
+	return raw;
 }
 
 /** Awaits a possibly-async handler callback and logs rejections. */
@@ -234,9 +204,9 @@ function invoke(name: string, ctx: WebSocketContext, fn: () => void | Promise<vo
 }
 
 /**
- * Wires a single post-upgrade connection to its handler. Handles the
- * dispatch-precedence rules (`actions[name]` > `onMessage` > drop) and makes
- * sure handler failures do not close the connection.
+ * Wires a single post-upgrade connection to its handler. Inbound frames are
+ * forwarded to `onMessage`; handler failures are logged and do not close the
+ * connection.
  */
 function attachConnection(
 	ws: WebSocket,
@@ -252,7 +222,7 @@ function attachConnection(
 	}
 	const mode: "pcp" | "plain" = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
 	const ctx = createContext(ws, req, mode, prefix, baseLog);
-	const { onConnect, onMessage, onClose, actions } = loaded.handler;
+	const { onConnect, onMessage, onClose } = loaded.handler;
 
 	ctx.log.info(`connect (mode=${mode})`);
 
@@ -262,19 +232,12 @@ function attachConnection(
 
 	ws.on("message", (payload) => {
 		const raw = typeof payload === "string" ? payload : payload.toString("utf8");
-		const frame = decodeFrame(raw, mode);
-
-		const action = frame.action;
-		const actionHandler = action ? actions?.[action] : undefined;
-		if (action && actionHandler) {
-			invoke(`action:${action}`, ctx, () => actionHandler(ctx, frame.data));
-			return;
-		}
+		const message = decodeMessage(raw, mode);
 		if (onMessage) {
-			invoke("onMessage", ctx, () => onMessage(ctx, frame));
+			invoke("onMessage", ctx, () => onMessage(ctx, message));
 			return;
 		}
-		ctx.log.debug(`dropped frame (action=${action ?? "(none)"})`);
+		ctx.log.debug("dropped frame (no onMessage)");
 	});
 
 	ws.on("close", (code, reasonBuf) => {

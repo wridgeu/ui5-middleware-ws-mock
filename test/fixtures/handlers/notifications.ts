@@ -1,50 +1,36 @@
 import type { WebSocketHandler } from "../../../src/types.js";
 
 /**
- * Demo WebSocket handler wired at `/ws/notifications`.
+ * Demo handler covering the lifecycle hooks the middleware exposes:
  *
- * The action set mirrors what the `WebSocketDemo` view exercises:
- *   - HELLO: pushed on connect with the negotiated subprotocol mode
- *   - PING: round-trips the payload back as PONG (liveness)
- *   - DISCONNECT: closes with 1001 so the client's RetryStrategy reconnects
- *   - TERMINATE: hard-kills the socket (client observes 1006)
- *   - ORDER_UPDATE: echoes the payload as ORDER_UPDATE_ACK
+ *   - `onConnect` sends `HELLO`
+ *   - `onMessage` interprets the body as an application command (`DISCONNECT`
+ *     → clean close 1001; `TERMINATE` → hard kill, client sees 1006)
+ *   - `onClose` logs the close code + reason
  *
- * The file stays free of the middleware's internal imports; it only needs
- * the public `WebSocketHandler` / `WebSocketContext` types.
+ * The "command in the body" shape is application-level: the middleware itself
+ * does not parse, route, or interpret payloads.
  */
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
 		const remote = ctx.req.socket.remoteAddress ?? "unknown";
 		ctx.log.info(`connect from ${remote}`);
-		ctx.send({
-			action: "HELLO",
-			data: { greeting: "hi", mode: ctx.mode, at: new Date().toISOString() },
-		});
+		ctx.send("HELLO");
 	},
 
-	actions: {
-		PING: (ctx, data) => {
-			ctx.send({ action: "PONG", data });
-		},
-
-		DISCONNECT: (ctx) => {
+	onMessage: (ctx, message) => {
+		const body = typeof message === "string" ? message : message.body;
+		if (body === "DISCONNECT") {
 			ctx.log.info("DISCONNECT requested; closing with 1001");
 			ctx.close(1001, "requested");
-		},
-
-		TERMINATE: (ctx) => {
+			return;
+		}
+		if (body === "TERMINATE") {
 			ctx.log.info("TERMINATE requested; killing socket");
 			ctx.terminate();
-		},
-
-		ORDER_UPDATE: (ctx, data) => {
-			ctx.send({ action: "ORDER_UPDATE_ACK", data });
-		},
-	},
-
-	onMessage: (ctx, frame) => {
-		ctx.log.debug(`unhandled frame (action=${frame.action ?? "(none)"}, raw=${frame.raw})`);
+			return;
+		}
+		ctx.log.debug(`unhandled body=${body}`);
 	},
 
 	onClose: (ctx, code, reason) => {
