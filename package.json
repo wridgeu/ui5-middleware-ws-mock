@@ -27,12 +27,12 @@
 		"LICENSE"
 	],
 	"type": "module",
-	"main": "dist/middleware.js",
+	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
-			"default": "./dist/middleware.js"
+			"default": "./dist/index.js"
 		},
 		"./types": {
 			"types": "./dist/types.d.ts"
