@@ -53,14 +53,16 @@ export function pcpEscape(value: string): string {
  * the trick SapPcpWebSocket uses to avoid double-substitution of `\\`.
  */
 export function pcpUnescape(value: string): string {
-	const parts = value.split(UNESCAPE_PLACEHOLDER);
-	for (let i = 0; i < parts.length; i++) {
-		parts[i] = parts[i]!.replace(/\\\\/g, UNESCAPE_PLACEHOLDER)
-			.replace(/\\:/g, ":")
-			.replace(/\\n/g, "\n")
-			.replace(new RegExp(UNESCAPE_PLACEHOLDER, "g"), "\\");
-	}
-	return parts.join(UNESCAPE_PLACEHOLDER);
+	return value
+		.split(UNESCAPE_PLACEHOLDER)
+		.map((part) =>
+			part
+				.replace(/\\\\/g, UNESCAPE_PLACEHOLDER)
+				.replace(/\\:/g, ":")
+				.replace(/\\n/g, "\n")
+				.replace(new RegExp(UNESCAPE_PLACEHOLDER, "g"), "\\"),
+		)
+		.join(UNESCAPE_PLACEHOLDER);
 }
 
 /**
