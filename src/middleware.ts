@@ -48,16 +48,17 @@ interface LoadedRoute {
 interface FactoryParameters {
 	/**
 	 * `@ui5/logger/Logger` instance the UI5 tooling passes in. Structural
-	 * subset: `@ui5/logger` ships no type declarations, so we describe only
-	 * the levels we use. `debug` is optional because older logger versions
-	 * do not expose it; `createContext` falls back to `info` when it's
-	 * missing.
+	 * subset: `@ui5/logger` ships no type declarations, so we describe the
+	 * six level methods upstream emits (`silly`, `verbose`, `perf`, `info`,
+	 * `warn`, `error`). Versions older than v4 are not supported.
 	 */
 	log: {
+		silly: (...args: unknown[]) => void;
+		verbose: (...args: unknown[]) => void;
+		perf: (...args: unknown[]) => void;
 		info: (...args: unknown[]) => void;
 		warn: (...args: unknown[]) => void;
 		error: (...args: unknown[]) => void;
-		debug?: (...args: unknown[]) => void;
 	};
 	options: {
 		/** Value of `customMiddleware[].configuration` as declared in `ui5.yaml`. */
@@ -124,11 +125,16 @@ function createContext(
 	prefix: string,
 	baseLog: FactoryParameters["log"],
 ): WebSocketContext {
+	// `@ui5/logger`'s Logger is a class whose level methods rely on `this`
+	// (`this._emitOrLog`); pulling a method out and calling it bare strips
+	// the receiver and crashes. Always invoke through `baseLog`.
 	const log: WebSocketLog = {
+		silly: (...a: unknown[]) => baseLog.silly(prefix, ...a),
+		verbose: (...a: unknown[]) => baseLog.verbose(prefix, ...a),
+		perf: (...a: unknown[]) => baseLog.perf(prefix, ...a),
 		info: (...a: unknown[]) => baseLog.info(prefix, ...a),
 		warn: (...a: unknown[]) => baseLog.warn(prefix, ...a),
 		error: (...a: unknown[]) => baseLog.error(prefix, ...a),
-		debug: (...a: unknown[]) => (baseLog.debug ?? baseLog.info)(prefix, ...a),
 	};
 
 	const send = (message: string): void => {
@@ -232,7 +238,7 @@ function attachConnection(
 			invoke("onMessage", ctx, () => onMessage(ctx, message));
 			return;
 		}
-		ctx.log.debug("dropped frame (no onMessage)");
+		ctx.log.verbose("dropped frame (no onMessage)");
 	});
 
 	ws.on("close", (code, reasonBuf) => {

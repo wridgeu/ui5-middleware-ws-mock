@@ -48,18 +48,23 @@ export interface WebSocketContext {
  * is prefixed with the route's `[ws-mock:<mountPath>]` tag so output stays
  * distinguishable when multiple routes are mounted. Backed by the
  * `@ui5/logger/Logger` instance the UI5 tooling hands to the middleware
- * factory, with `debug` falling back to `info` when the host logger does not
- * expose one.
+ * factory; the six methods below mirror `@ui5/logger`'s level names in
+ * priority order (lowest → highest). The `silent` level intentionally has no
+ * method, matching upstream.
  */
 export interface WebSocketLog {
+	/** Lowest-priority trace; suppressed by default. */
+	silly: (...args: unknown[]) => void;
+	/** Verbose trace; prefer for per-frame logs that would be noisy at `info`. */
+	verbose: (...args: unknown[]) => void;
+	/** Performance-oriented log; suppressed below the `perf` level. */
+	perf: (...args: unknown[]) => void;
 	/** Informational message. */
 	info: (...args: unknown[]) => void;
 	/** Warning: something unusual happened but the connection is continuing. */
 	warn: (...args: unknown[]) => void;
 	/** Error: consumer bug, transport failure, or infrastructure issue. */
 	error: (...args: unknown[]) => void;
-	/** Verbose trace; prefer for per-frame logs that would be noisy at `info`. */
-	debug: (...args: unknown[]) => void;
 }
 
 /**
@@ -114,8 +119,8 @@ export interface WebSocketHandler {
 	 * frame string in plain mode and a decoded `PcpFrame` in PCP mode;
 	 * handlers branch on `ctx.mode` (or `typeof message`) to read it.
 	 *
-	 * Frames that arrive with no `onMessage` defined are dropped with a debug
-	 * log.
+	 * Frames that arrive with no `onMessage` defined are dropped with a
+	 * `verbose` log.
 	 */
 	onMessage?: (ctx: WebSocketContext, message: InboundMessage) => void | Promise<void>;
 	/**

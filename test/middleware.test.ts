@@ -190,7 +190,7 @@ describe("ws-mock middleware", () => {
 		ws.send("hello");
 		await waitForLog(
 			args.entries,
-			(e) => e.level === "debug" && String(e.args.join(" ")).includes("dropped frame"),
+			(e) => e.level === "verbose" && String(e.args.join(" ")).includes("dropped frame"),
 		);
 		expect(ws.readyState).toBe(WebSocket.OPEN);
 
@@ -492,5 +492,74 @@ describe("ws-mock middleware", () => {
 			(e) => e.level === "warn" && String(e.args.join(" ")).includes("no routes configured"),
 		);
 		expect(warning).toBeDefined();
+	});
+
+	// Regression: `@ui5/logger`'s Logger is a class whose level methods read
+	// `this` (`this._emitOrLog`). Pulling a method out and calling it bare
+	// strips the receiver and crashes with `Cannot read properties of
+	// undefined (reading '_emitOrLog')`. The capture-helper logger is built
+	// from arrow functions so it never tripped this; the class-based logger
+	// below exercises the receiver requirement.
+	it("ctx.log.verbose invokes the host logger's verbose method with the correct `this`", async () => {
+		const calls: { level: string; args: unknown[]; this: unknown }[] = [];
+		class ClassLogger {
+			private readonly state = "logger-instance";
+			silly(...args: unknown[]): void {
+				if (this.state !== "logger-instance") throw new TypeError("silly: bad this");
+				calls.push({ level: "silly", args, this: this });
+			}
+			verbose(...args: unknown[]): void {
+				if (this.state !== "logger-instance") throw new TypeError("verbose: bad this");
+				calls.push({ level: "verbose", args, this: this });
+			}
+			perf(...args: unknown[]): void {
+				if (this.state !== "logger-instance") throw new TypeError("perf: bad this");
+				calls.push({ level: "perf", args, this: this });
+			}
+			info(...args: unknown[]): void {
+				if (this.state !== "logger-instance") throw new TypeError("info: bad this");
+				calls.push({ level: "info", args, this: this });
+			}
+			warn(...args: unknown[]): void {
+				if (this.state !== "logger-instance") throw new TypeError("warn: bad this");
+				calls.push({ level: "warn", args, this: this });
+			}
+			error(...args: unknown[]): void {
+				if (this.state !== "logger-instance") throw new TypeError("error: bad this");
+				calls.push({ level: "error", args, this: this });
+			}
+		}
+		const classLog = new ClassLogger();
+		await wsMock({
+			log: classLog,
+			options: {
+				configuration: {
+					routes: [
+						{
+							mountPath: "/ws/no-onmessage",
+							handler: "test/fixtures/handlers/no-onmessage.ts",
+						},
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/no-onmessage`);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		ws.send("hello");
+		await vi.waitFor(() =>
+			expect(
+				calls.find(
+					(c) =>
+						c.level === "verbose" && String(c.args.join(" ")).includes("dropped frame"),
+				),
+			).toBeDefined(),
+		);
+		const verboseCall = calls.find((c) => c.level === "verbose");
+		expect(verboseCall?.this).toBe(classLog);
+
+		ws.close();
 	});
 });

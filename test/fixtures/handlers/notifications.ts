@@ -30,7 +30,7 @@ const handler: WebSocketHandler = {
 			ctx.terminate();
 			return;
 		}
-		ctx.log.debug(`unhandled body=${body}`);
+		ctx.log.verbose(`unhandled body=${body}`);
 	},
 
 	onClose: (ctx, code, reason) => {
