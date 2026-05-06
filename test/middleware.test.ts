@@ -120,8 +120,9 @@ describe("ws-mock middleware", () => {
 	it("PCP mode: ctx.send body is written verbatim with no JSON quoting", async () => {
 		// Regression: previously ctx.send ran JSON.stringify(data), so a string
 		// payload arrived on the wire wrapped in quotes (`"foo"` instead of
-		// `foo`). The handler now hands `message` straight to ctx.send and the
-		// body bytes are exactly what the handler emitted.
+		// `foo`), which a real `SapPcpWebSocket` peer never undoes. The strict
+		// equality below would fail under the old behavior because the body
+		// would arrive as `ECHO:"foo"` (extra quotes from the stringify pass).
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
 		fireHook(serverHandle.server);
@@ -134,9 +135,26 @@ describe("ws-mock middleware", () => {
 		const reply = waitForMessages(ws, 1);
 		ws.send(encode({ body: "foo" }));
 		const replyMsgs = await reply;
-		const decoded = decode(replyMsgs[0]!);
-		expect(decoded.body).toBe("ECHO:foo");
-		expect(decoded.body).not.toContain('"');
+		expect(decode(replyMsgs[0]!).body).toBe("ECHO:foo");
+
+		ws.close();
+	});
+
+	it("PCP mode: bodies containing `:` and `\\n` round-trip unmodified (PCP escapes only headers, not bodies)", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await ready;
+
+		const tricky = "k:v\nline2\\back";
+		const reply = waitForMessages(ws, 1);
+		ws.send(encode({ body: tricky }));
+		const replyMsgs = await reply;
+		expect(decode(replyMsgs[0]!).body).toBe(`ECHO:${tricky}`);
 
 		ws.close();
 	});
@@ -173,6 +191,40 @@ describe("ws-mock middleware", () => {
 		await waitForLog(
 			args.entries,
 			(e) => e.level === "debug" && String(e.args.join(" ")).includes("dropped frame"),
+		);
+		expect(ws.readyState).toBe(WebSocket.OPEN);
+
+		ws.close();
+	});
+
+	it("warns when ctx.send is called on a non-open socket", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/close-then-send.ts", "/ws/closesend");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/closesend`);
+		await new Promise<void>((resolve) => {
+			ws.once("open", resolve);
+			ws.once("close", () => resolve());
+		});
+
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "warn" && String(e.args.join(" ")).includes("non-open socket"),
+		);
+	});
+
+	it("logs onConnect throws without closing the connection", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/onconnect-throws.ts", "/ws/cthrow");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/cthrow`);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "error" && String(e.args.join(" ")).includes("onConnect threw"),
 		);
 		expect(ws.readyState).toBe(WebSocket.OPEN);
 
