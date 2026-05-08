@@ -35,6 +35,7 @@ import type {
 	WebSocketHandler,
 	WebSocketLog,
 	WebSocketMiddlewareConfiguration,
+	WebSocketMode,
 	WebSocketRoute,
 } from "./types.js";
 import { decode, encode, SUBPROTOCOL } from "./pcp.js";
@@ -47,19 +48,12 @@ interface LoadedRoute {
 
 interface FactoryParameters {
 	/**
-	 * `@ui5/logger/Logger` instance the UI5 tooling passes in. Structural
-	 * subset: `@ui5/logger` ships no type declarations, so we describe the
-	 * six level methods upstream emits (`silly`, `verbose`, `perf`, `info`,
-	 * `warn`, `error`). Versions older than v4 are not supported.
+	 * `@ui5/logger/Logger` instance the UI5 tooling passes in. `@ui5/logger`
+	 * ships no types, so we describe a structural subset matching the six v4
+	 * level methods (`silly`, `verbose`, `perf`, `info`, `warn`, `error`).
+	 * Versions older than v4 are not supported.
 	 */
-	log: {
-		silly: (...args: unknown[]) => void;
-		verbose: (...args: unknown[]) => void;
-		perf: (...args: unknown[]) => void;
-		info: (...args: unknown[]) => void;
-		warn: (...args: unknown[]) => void;
-		error: (...args: unknown[]) => void;
-	};
+	log: WebSocketLog;
 	options: {
 		/** Value of `customMiddleware[].configuration` as declared in `ui5.yaml`. */
 		configuration?: Partial<WebSocketMiddlewareConfiguration>;
@@ -121,7 +115,7 @@ async function loadHandler(projectRoot: string, route: WebSocketRoute): Promise<
 function createContext(
 	ws: WebSocket,
 	req: IncomingMessage,
-	mode: "pcp" | "plain",
+	mode: WebSocketMode,
 	prefix: string,
 	baseLog: FactoryParameters["log"],
 ): WebSocketContext {
@@ -184,7 +178,7 @@ function createContext(
  *            `SapPcpWebSocket`'s fallback behavior. The middleware does not
  *            inspect the body.
  */
-function decodeMessage(raw: string, mode: "pcp" | "plain"): InboundMessage {
+function decodeMessage(raw: string, mode: WebSocketMode): InboundMessage {
 	if (mode === "pcp") {
 		const { pcpFields, body } = decode(raw);
 		return { fields: pcpFields, body };
@@ -221,7 +215,7 @@ function attachConnection(
 		ws.close(1011, "handler unavailable");
 		return;
 	}
-	const mode: "pcp" | "plain" = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
+	const mode: WebSocketMode = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
 	const ctx = createContext(ws, req, mode, prefix, baseLog);
 	const { onConnect, onMessage, onClose } = loaded.handler;
 
