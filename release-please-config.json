@@ -6,7 +6,6 @@
 		{ "type": "refactor", "section": "Code Refactoring" },
 		{ "type": "perf", "section": "Performance Improvements" },
 		{ "type": "revert", "section": "Reverts" },
-		{ "type": "deps", "section": "Dependencies", "hidden": true },
 		{ "type": "build", "section": "Build System", "hidden": true },
 		{ "type": "ci", "section": "CI", "hidden": true },
 		{ "type": "chore", "section": "Miscellaneous", "hidden": true },
