@@ -52,7 +52,8 @@
 		"test:coverage": "vitest run --coverage",
 		"pack:check": "npm pack --dry-run",
 		"commitlint": "commitlint --last",
-		"prepare": "husky"
+		"prepare": "husky",
+		"prepublishOnly": "npm run check && npm run build && npm test"
 	},
 	"dependencies": {
 		"ui5-utils-express": "^1.5.1",
