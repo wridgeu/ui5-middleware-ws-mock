@@ -148,8 +148,10 @@ export function decode(text: string): DecodeResult {
 	const pcpFields: Record<string, string> = {};
 	for (const line of headerPart.split("\n")) {
 		const match = line.match(FIELD_REGEX);
-		if (match && match.length === 3) {
-			pcpFields[pcpUnescape(match[1]!)] = pcpUnescape(match[2]!);
+		if (!match) continue;
+		const [, key, value] = match;
+		if (key !== undefined && value !== undefined) {
+			pcpFields[pcpUnescape(key)] = pcpUnescape(value);
 		}
 	}
 	return { pcpFields, body };
