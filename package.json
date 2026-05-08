@@ -45,7 +45,7 @@
 		"fmt:check": "oxfmt --ignore-path .oxfmtignore --check .",
 		"lint": "oxlint --tsconfig tsconfig.json --import-plugin --deny-warnings",
 		"lint:fix": "oxlint --tsconfig tsconfig.json --import-plugin --fix",
-		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
 		"check": "npm run fmt:check && npm run lint && npm run typecheck",
 		"test": "vitest run",
 		"test:watch": "vitest",
