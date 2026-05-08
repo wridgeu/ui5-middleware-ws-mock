@@ -214,6 +214,10 @@ function attachConnection(
 	baseLog: FactoryParameters["log"],
 ): void {
 	const prefix = `[ws-mock:${loaded.route.mountPath}]`;
+	// Register before any early-return: ws emits 'error' synchronously on
+	// malformed inbound frames; an unlistened emit crashes the process.
+	ws.on("error", (err) => baseLog.error(`${prefix} socket error:`, err));
+
 	if (!loaded.handler) {
 		baseLog.error(`${prefix} refusing connection: handler failed to load`, loaded.loadError);
 		ws.close(1011, "handler unavailable");
@@ -246,8 +250,6 @@ function attachConnection(
 			invoke("onClose", ctx, () => onClose(ctx, code, reason));
 		}
 	});
-
-	ws.on("error", (err) => ctx.log.error("socket error:", err));
 }
 
 /**

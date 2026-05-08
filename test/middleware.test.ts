@@ -299,6 +299,39 @@ describe("ws-mock middleware", () => {
 		expect(closure.reason).toContain("handler unavailable");
 	});
 
+	it("attaches an error listener even on refused connections, so a late ws error doesn't crash the process", async () => {
+		// Regression: a 'error' emitted on a refused-connection ws (e.g. from
+		// a malformed inbound frame racing the 1011 close) used to crash.
+		const capturedSockets: WebSocket[] = [];
+		const spy = vi
+			.spyOn(WebSocketServer.prototype, "handleUpgrade")
+			.mockImplementation(function (this: WebSocketServer, req, socket, head, cb) {
+				const original = WebSocketServer.prototype.handleUpgrade;
+				spy.mockRestore();
+				original.call(this, req, socket, head, (ws, request) => {
+					capturedSockets.push(ws);
+					cb(ws, request);
+				});
+			});
+		try {
+			const args = buildFactoryArgs("test/fixtures/handlers/broken-import.ts", "/ws/broken");
+			await wsMock(args);
+			fireHook(serverHandle.server);
+
+			const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/broken`);
+			await new Promise<void>((resolve) => ws.on("close", () => resolve()));
+
+			expect(capturedSockets.length).toBe(1);
+			const serverSocket = capturedSockets[0]!;
+			expect(serverSocket.listenerCount("error")).toBeGreaterThan(0);
+			expect(() =>
+				serverSocket.emit("error", new Error("synthetic post-close error")),
+			).not.toThrow();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
 	it("closes with 1011 when handler module has no default export", async () => {
 		const args = buildFactoryArgs(
 			"test/fixtures/handlers/no-default-export.ts",
