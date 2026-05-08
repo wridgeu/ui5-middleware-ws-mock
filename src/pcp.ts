@@ -43,7 +43,7 @@ export const SUBPROTOCOL = "v10.pcp.sap.com";
  * Escape a header name or value per the PCP spec.
  */
 export function pcpEscape(value: string): string {
-	return String(value).replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/\n/g, "\\n");
+	return value.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/\n/g, "\\n");
 }
 
 /**
@@ -94,10 +94,6 @@ export interface EncodeOptions {
  * `pcp-action` and `pcp-body-type` are emitted first, in that order, even if
  * the caller passes them inside `fields` (`pcp-*` entries in `fields` are
  * ignored, matching the spec's reserved-prefix rule).
- *
- * Field values are coerced to strings via `String(value)` (matching openui5),
- * so numeric or boolean values become their string representation on the wire
- * and the original type is not recovered on decode.
  *
  * @throws {Error} If a field name is the empty string.
  */
