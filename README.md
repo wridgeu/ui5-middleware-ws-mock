@@ -164,7 +164,7 @@ Every callback receives a `WebSocketContext` (defined in [`src/types.ts`](src/ty
 | `close`     | `(code?, reason?) => void`  | Close the connection with optional code (default 1000) and reason.                                                                                    |
 | `terminate` | `() => void`                | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                        |
 
-Method names mirror `@ui5/logger`'s level names (`silly`, `verbose`, `perf`, `info`, `warn`, `error`). Consumers can filter by the `[ws-mock:<mountPath>]` prefix or by log message content.
+Consumers can filter by the `[ws-mock:<mountPath>]` prefix or by log message content.
 
 ### `ctx.send(message)`
 
