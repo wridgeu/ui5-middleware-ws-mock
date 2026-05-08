@@ -101,6 +101,14 @@ describe("decode", () => {
 		expect(result.pcpFields["notafield"]).toBeUndefined();
 	});
 
+	it("parses fields with empty values", () => {
+		const wire = "pcp-action:X\nempty:\nreal:yes\n\nbody";
+		const result = decode(wire);
+		expect(result.pcpFields["empty"]).toBe("");
+		expect(result.pcpFields["real"]).toBe("yes");
+		expect(result.body).toBe("body");
+	});
+
 	it("drops empty-key lines without surfacing them as a field", () => {
 		const wire = ":value\nreal:yes\n\nbody";
 		const result = decode(wire);
