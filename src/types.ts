@@ -2,6 +2,13 @@ import type { IncomingMessage } from "node:http";
 import type { WebSocket } from "ws";
 
 /**
+ * Negotiated wire mode for a connection. `"pcp"` when the client offered
+ * `v10.pcp.sap.com`; `"plain"` otherwise. Snapshot at the handshake; fixed
+ * for the lifetime of the connection.
+ */
+export type WebSocketMode = "pcp" | "plain";
+
+/**
  * Per-connection context handed to every handler callback.
  *
  * `mode` is snapshot at the WebSocket upgrade based on the subprotocol the
@@ -15,7 +22,7 @@ export interface WebSocketContext {
 	/** The HTTP upgrade request. Useful for `url`, `headers`, and `socket.remoteAddress`. */
 	req: IncomingMessage;
 	/** `"pcp"` when the client offered `v10.pcp.sap.com`, `"plain"` otherwise. */
-	mode: "pcp" | "plain";
+	mode: WebSocketMode;
 	/** Scoped logger, prefixed with `[ws-mock:<mountPath>]`. */
 	log: WebSocketLog;
 	/**

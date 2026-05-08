@@ -2,6 +2,7 @@ export { default } from "./middleware.js";
 export type {
 	WebSocketContext,
 	WebSocketLog,
+	WebSocketMode,
 	PcpFrame,
 	InboundMessage,
 	WebSocketHandler,
