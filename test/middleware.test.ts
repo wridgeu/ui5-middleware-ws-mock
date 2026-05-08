@@ -350,6 +350,94 @@ describe("ws-mock middleware", () => {
 		expect(closure.reason).toContain("handler unavailable");
 	});
 
+	it("closes with 1011 even when the client offered the PCP subprotocol", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/broken-import.ts", "/ws/broken-pcp");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(
+			`ws://127.0.0.1:${serverHandle.port}/ws/broken-pcp`,
+			"v10.pcp.sap.com",
+		);
+		const closure = await new Promise<{ code: number; reason: string; protocol: string }>(
+			(resolve) => {
+				ws.on("close", (code, reasonBuf) =>
+					resolve({
+						code,
+						reason: reasonBuf.toString("utf8"),
+						protocol: ws.protocol,
+					}),
+				);
+			},
+		);
+		expect(closure.protocol).toBe("v10.pcp.sap.com");
+		expect(closure.code).toBe(1011);
+		expect(closure.reason).toContain("handler unavailable");
+	});
+
+	it("forwards async onMessage results without spurious error logs", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/async-echo.ts", "/ws/async");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/async`);
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		expect((await ready)[0]).toBe("READY");
+
+		const echo = waitForMessages(ws, 1);
+		ws.send("ping");
+		expect((await echo)[0]).toBe("ECHO:ping");
+
+		const errors = args.entries.filter((e) => e.level === "error");
+		expect(errors).toEqual([]);
+
+		ws.close();
+	});
+
+	it("PCP mode: header-less inbound frames decode as body-only and log a verbose warning", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await ready;
+
+		// Per SapPcpWebSocket's fallback, decode of a header-less frame yields
+		// { fields: {}, body: <raw> }, so the echo handler sees the raw bytes.
+		const reply = waitForMessages(ws, 1);
+		ws.send("just-a-body");
+		expect(decode((await reply)[0]!).body).toBe("ECHO:just-a-body");
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "verbose" &&
+				String(e.args.join(" ")).includes("missing LFLF separator"),
+		);
+
+		ws.close();
+	});
+
+	it("plain mode: binary inbound frames are decoded as utf-8 and echoed back", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await ready;
+
+		const echo = waitForMessages(ws, 1);
+		ws.send(Buffer.from("héllo", "utf8"));
+		expect((await echo)[0]).toBe("ECHO:héllo");
+
+		ws.close();
+	});
+
 	it("isolates routes by mountPath and lets unrelated upgrades fall through", async () => {
 		const { log, entries } = createCapturedLogger();
 		await wsMock({
@@ -402,7 +490,16 @@ describe("ws-mock middleware", () => {
 		wsC.close();
 		fallthroughWss.close();
 
-		expect(entries.some((e) => String(e.args[0]).includes("/ws/a"))).toBe(true);
+		// Per-route connect log; the startup banner's "/ws/a" mention alone
+		// would still pass even if isolation were broken.
+		expect(
+			entries.some(
+				(e) =>
+					e.level === "info" &&
+					String(e.args[0]).includes("[ws-mock:/ws/a]") &&
+					String(e.args.join(" ")).includes("connect"),
+			),
+		).toBe(true);
 	});
 
 	it("rejects clients offering only an unknown subprotocol", async () => {
@@ -434,7 +531,7 @@ describe("ws-mock middleware", () => {
 
 		await waitForLog(
 			args.entries,
-			(e) => e.level === "info" && String(e.args.join(" ")).includes("disconnect 1000"),
+			(e) => e.level === "info" && String(e.args.join(" ")).includes("disconnect 1000 bye"),
 		);
 	});
 
