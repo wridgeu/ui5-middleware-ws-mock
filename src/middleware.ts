@@ -9,7 +9,8 @@
  * grab the underlying HTTP server; see the hook source for the full trick).
  * On each upgrade we check the request's pathname against our route table,
  * hand the socket to `wss.handleUpgrade` if we own it, and otherwise bail
- * silently so other middleware (fe-mockserver etc.) can handle the request.
+ * without claiming the upgrade so other middleware (fe-mockserver etc.)
+ * can handle the request. Unparseable urls log at verbose and bail too.
  *
  * PCP subprotocol negotiation is declared via `handleProtocols` at
  * WebSocketServer construction: if the client offered `v10.pcp.sap.com` we
@@ -108,9 +109,9 @@ async function loadHandler(projectRoot: string, route: WebSocketRoute): Promise<
 
 /**
  * Builds the `ctx` object handed to every handler callback. `send` / `close`
- * / `terminate` are self-contained and never throw: closed sockets, encoder
- * errors, and synchronous `ws.send` throws are caught here and routed to the
- * prefix-aware logger.
+ * / `terminate` are self-contained and never throw: closed sockets and
+ * synchronous `ws.send` / `ws.close` / `ws.terminate` throws are caught here
+ * and routed to the prefix-aware logger.
  */
 function createContext(
 	ws: WebSocket,

@@ -154,15 +154,15 @@ All callbacks are optional. A handler that only implements `onMessage` is valid;
 
 Every callback receives a `WebSocketContext` (defined in [`src/types.ts`](src/types.ts)):
 
-| Field       | Type                        | Description                                                                                                                                           |
-| ----------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ws`        | `WebSocket`                 | Raw `ws` instance. Required for any framing the helper methods do not cover (custom PCP actions, binary body-type, additional header fields).         |
-| `req`       | `http.IncomingMessage`      | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                        |
-| `mode`      | `"pcp" \| "plain"`          | Negotiated at the handshake. Handlers branch on this to interpret `message` and to pick an outbound framing strategy.                                 |
-| `log`       | `WebSocketLog`              | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`. |
-| `send`      | `(message: string) => void` | Send a text message. Plain mode writes the bytes through `ws.send` unchanged; PCP mode wraps them in a default frame. See below.                      |
-| `close`     | `(code?, reason?) => void`  | Close the connection with optional code (default 1000) and reason.                                                                                    |
-| `terminate` | `() => void`                | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                        |
+| Field       | Type                        | Description                                                                                                                                                                         |
+| ----------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ws`        | `WebSocket`                 | Raw `ws` instance. Required for any framing the helper methods do not cover (custom PCP actions, binary body-type, additional header fields).                                       |
+| `req`       | `http.IncomingMessage`      | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                                                      |
+| `mode`      | `WebSocketMode`             | `"pcp" \| "plain"`. Negotiated at the handshake; fixed for the lifetime of the connection. Handlers branch on this to interpret `message` and to pick an outbound framing strategy. |
+| `log`       | `WebSocketLog`              | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.                               |
+| `send`      | `(message: string) => void` | Send a text message. Plain mode writes the bytes through `ws.send` unchanged; PCP mode wraps them in a default frame. See below.                                                    |
+| `close`     | `(code?, reason?) => void`  | Close the connection with optional code (default 1000) and reason.                                                                                                                  |
+| `terminate` | `() => void`                | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                                                      |
 
 Consumers can filter by the `[ws-mock:<mountPath>]` prefix or by log message content.
 
@@ -348,14 +348,16 @@ After the handshake, `ws.protocol` is either `"v10.pcp.sap.com"` or `""`, and th
 
 Every failure site is caught and logged through the route-scoped logger (`[ws-mock:<mountPath>]`). The connection stays open unless the handler explicitly closes it.
 
-| Site                                         | Policy                                                                                                                                                       |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ws.send` on a non-open socket               | pre-check `ws.readyState === OPEN`; skip with a `warn` when not.                                                                                             |
-| `ws.send` throws synchronously               | caught around the call; log at `error`; connection is left to close via `ws`'s own error handling.                                                           |
-| Malformed inbound PCP frame                  | decoder returns partial data; `onMessage` sees best-effort `fields` / `body` (empty `fields` if the LFLF separator is missing, mirroring `SapPcpWebSocket`). |
-| Handler sync throw                           | caught; log at `error`; connection stays open.                                                                                                               |
-| Handler async rejection                      | `.catch(err => ctx.log.error(...))`; connection stays open.                                                                                                  |
-| Dynamic `import(handler)` failure at startup | logged at `error`; the route accepts the upgrade then closes with code 1011 (Internal Server Error).                                                         |
+| Site                                         | Policy                                                                                                                                                                                                                                                |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ws.send` on a non-open socket               | pre-check `ws.readyState === OPEN`; skip with a `warn` when not.                                                                                                                                                                                      |
+| `ws.send` throws synchronously               | caught around the call; log at `error`; connection is left to close via `ws`'s own error handling.                                                                                                                                                    |
+| `ws`-level `'error'` event                   | always-on listener attached at the top of `attachConnection`; log at `error`. Required to keep a misbehaving peer (invalid UTF-8, oversize payload, malformed frame) from crashing `ui5 serve` via Node's EventEmitter contract.                      |
+| Malformed inbound PCP frame                  | decoder returns partial data; `onMessage` sees best-effort `fields` / `body` (empty `fields` if the LFLF separator is missing, mirroring `SapPcpWebSocket`). The fallback also logs at `verbose` so it's distinguishable from an empty-headers frame. |
+| Handler sync throw                           | caught; log at `error`; connection stays open.                                                                                                                                                                                                        |
+| Handler async rejection                      | `.catch(err => ctx.log.error(...))`; connection stays open.                                                                                                                                                                                           |
+| Dynamic `import(handler)` failure at startup | logged at `error`; the route accepts the upgrade then closes with code 1011 (Internal Server Error).                                                                                                                                                  |
+| Unparseable upgrade URL                      | `try { new URL(req.url, ...) } catch` bails without claiming the upgrade so other listeners get a shot; log at `verbose`.                                                                                                                             |
 
 The default `ctx.send` path does not wrap `encode()` in a try/catch: the only error condition (empty field name) is unreachable from this call site. Handlers that build custom PCP frames via the exported `encode()` are responsible for handling that error themselves if they pass user-controlled field names.
 
