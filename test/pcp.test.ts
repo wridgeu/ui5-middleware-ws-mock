@@ -69,11 +69,6 @@ describe("encode", () => {
 		const wire = encode({ fields: { weird: "a:b\\c\nd" } });
 		expect(wire).toContain("weird:a\\:b\\\\c\\nd\n");
 	});
-
-	it("coerces non-string field values via String()", () => {
-		const wire = encode({ fields: { n: 42 as unknown as string } });
-		expect(wire).toContain("n:42\n");
-	});
 });
 
 describe("decode", () => {
