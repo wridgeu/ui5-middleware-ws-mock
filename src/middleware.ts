@@ -175,11 +175,15 @@ function createContext(
  *   - plain: forwarded verbatim as a string.
  *   - pcp:   `decode()` is best-effort — frames missing the LFLF separator
  *            land as a body-only `PcpFrame` with empty `fields`, matching
- *            `SapPcpWebSocket`'s fallback behavior. The middleware does not
- *            inspect the body.
+ *            `SapPcpWebSocket`'s fallback. We surface that fallback at
+ *            verbose so operators can tell a malformed frame from an
+ *            empty-headers frame.
  */
-function decodeMessage(raw: string, mode: WebSocketMode): InboundMessage {
+function decodeMessage(raw: string, mode: WebSocketMode, log: WebSocketLog): InboundMessage {
 	if (mode === "pcp") {
+		if (!raw.includes("\n\n")) {
+			log.verbose("malformed PCP frame: missing LFLF separator; treating as body-only");
+		}
 		const { pcpFields, body } = decode(raw);
 		return { fields: pcpFields, body };
 	}
@@ -227,7 +231,7 @@ function attachConnection(
 
 	ws.on("message", (payload) => {
 		const raw = typeof payload === "string" ? payload : payload.toString("utf8");
-		const message = decodeMessage(raw, mode);
+		const message = decodeMessage(raw, mode, ctx.log);
 		if (onMessage) {
 			invoke("onMessage", ctx, () => onMessage(ctx, message));
 			return;
