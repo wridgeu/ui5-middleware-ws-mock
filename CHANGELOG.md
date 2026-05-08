@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.2.0...v0.3.0) (2026-05-08)
+
+
+### Features
+
+* **middleware:** log verbose on malformed PCP frames ([e316529](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/e3165296587cfc7a1019f33fe66d04d05d7da67e))
+* **middleware:** log verbose on unparseable upgrade urls ([1bdaff6](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/1bdaff6c0679848b82d1781d211ba11244519b19))
+
+
+### Bug Fixes
+
+* **middleware:** hoist ws error listener so refused connections cannot crash the process ([0fd9488](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/0fd94880f19df1f44c2708a0df1f00030e9fbf8c))
+
+
+### Code Refactoring
+
+* **pcp:** drop redundant String() coercion in pcpEscape ([c2ae0d4](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/c2ae0d4faa80a2454203b7d8e586c497d9f256ff))
+* **types:** extract WebSocketMode and dedupe FactoryParameters.log ([10f0edf](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/10f0edf0fa6a8db2623a2ee2b87d221b73c5e300))
+
 ## [0.2.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.1.1...v0.2.0) (2026-05-06)
 
 
