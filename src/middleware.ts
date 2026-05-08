@@ -303,8 +303,9 @@ export default async function wsMock({
 			let pathname: string;
 			try {
 				pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-			} catch {
-				return; // malformed request, let other handlers decide
+			} catch (err) {
+				log.verbose(`[ws-mock] ignoring upgrade with unparseable url=${req.url}:`, err);
+				return;
 			}
 			const entry = byPath.get(pathname);
 			if (!entry) return;
