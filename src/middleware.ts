@@ -85,8 +85,8 @@ interface HookCallbackArgs {
  *
  *   1. `configuration.rootPath` (if set): resolved relative to the project root.
  *      `"."` keeps the legacy project-root behavior; absolute paths pass through.
- *   2. Otherwise: the UI5 project's source path — typically `<root>/webapp/`
- *      for Application projects.
+ *   2. Otherwise: the UI5 project's source path (typically `<root>/webapp/`
+ *      for Application projects).
  *
  * `getSourcePath()` is implemented only on Application projects in
  * `@ui5/project`; Library/Module/ThemeLibrary throw. The throw propagates so

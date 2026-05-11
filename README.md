@@ -93,7 +93,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 
 ## TypeScript: importing types from a CommonJS-context project
 
-This package is published ESM-only — both the runtime (`"type": "module"`) and the type declarations (`dist/index.d.ts` exposed under the `types` and `default` export conditions only, with no `require` condition and no `.d.cts` shadow). When the importing file is resolved in a CommonJS context (typical with `"module": "commonjs"`, `"node10"`, or `"node16"`/`"nodenext"` when the importing file's nearest `package.json` declares `"type": "commonjs"` or omits it), `tsc` cannot pick up an ESM-only type declaration via a plain `import type`. The fix it suggests is the `resolution-mode` import attribute:
+This package is published ESM-only. The runtime declares `"type": "module"` and `dist/index.d.ts` is exposed under the `types` and `default` export conditions only, with no `require` condition and no `.d.cts` shadow. When the importing file is resolved in a CommonJS context (typical with `"module": "commonjs"` or `"node10"`, and with `"node16"`/`"nodenext"` when the importing file's nearest `package.json` declares `"type": "commonjs"` or omits it), `tsc` cannot pick up an ESM-only type declaration via a plain `import type`. The standard workaround is the `resolution-mode` import attribute:
 
 ```typescript
 import type { PcpFrame, WebSocketHandler } from "ui5-middleware-ws-mock" with {
@@ -101,12 +101,12 @@ import type { PcpFrame, WebSocketHandler } from "ui5-middleware-ws-mock" with {
 };
 ```
 
-The attribute is harmless — it tells `tsc` to resolve the specifier as if the importing file were ESM — but two settings avoid needing it altogether:
+The attribute tells `tsc` to resolve the specifier as if the importing file were ESM. Two settings avoid needing it altogether:
 
-- **Make the consuming TS context ESM.** Set `"type": "module"` in the consuming project's `package.json` and `"module": "nodenext"` (or `"bundler"`) plus `"moduleResolution": "nodenext"` (or `"bundler"`) in its `tsconfig.json`.
-- **Use `"moduleResolution": "bundler"`** when a UI bundler (Vite, esbuild, etc.) handles module loading. Bundler-mode resolution does not enforce the ESM/CJS split.
+- **Make the consuming TS context ESM.** Set `"type": "module"` in the consuming project's `package.json` and `"module": "nodenext"` plus `"moduleResolution": "nodenext"` in its `tsconfig.json`.
+- **Use `"moduleResolution": "bundler"`** when a bundler (Vite, esbuild, etc.) handles module loading. Bundler-mode resolution does not enforce the ESM/CJS split.
 
-This package does not ship a `.d.cts` shadow because `tsc` has no native single-pass dual-emit, and the post-build glue (a copy script or a build tool such as `tshy`) was judged not worth the build-system surface for a package this small.
+This package does not ship a `.d.cts` shadow. The UI5 ecosystem is moving to ESM, and supporting a CJS resolution context is not a goal here.
 
 ## Configuration
 
@@ -123,7 +123,7 @@ The `configuration` block under the `customMiddleware` entry accepts:
 
 The same `handler` value resolves to a different file depending on `rootPath`. All four forms are legal; pick the one that fits your project layout. Assume a project rooted at `<project>/` (the directory containing `ui5.yaml`).
 
-**Default (no `rootPath`).** Handler paths resolve under the UI5 source path — typically `<project>/webapp/`. Best fit for handlers that ship inside the deployed app:
+**Default (no `rootPath`).** Handler paths resolve under the UI5 source path (typically `<project>/webapp/`). Best fit for handlers that ship inside the deployed app:
 
 ```yaml
 configuration:
