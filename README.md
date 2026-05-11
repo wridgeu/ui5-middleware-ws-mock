@@ -106,7 +106,7 @@ The attribute tells `tsc` to resolve the specifier as if the importing file were
 - **Make the consuming TS context ESM.** Set `"type": "module"` in the consuming project's `package.json` and `"module": "nodenext"` plus `"moduleResolution": "nodenext"` in its `tsconfig.json`.
 - **Use `"moduleResolution": "bundler"`** when a bundler (Vite, esbuild, etc.) handles module loading. Bundler-mode resolution does not enforce the ESM/CJS split.
 
-This package does not ship a `.d.cts` shadow. The UI5 ecosystem is moving to ESM, and supporting a CJS resolution context is not a goal here.
+This package does not ship a `.d.cts` shadow. The JavaScript ecosystem is moving to ESM, and supporting a CJS resolution context is not a goal here.
 
 ## Configuration
 
