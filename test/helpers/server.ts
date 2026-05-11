@@ -44,11 +44,9 @@ export function resetHookCapture(): void {
 }
 
 /**
- * Builds a structural stand-in for `@ui5/server`'s `MiddlewareUtil` with both
- * `getRootPath()` and `getSourcePath()` reachable. Defaults `sourcePath` to
- * `rootPath` so existing tests that pass `handler` paths from the repo root
- * keep resolving the same way; pass `sourcePath` explicitly to exercise the
- * source-path-default resolution behavior.
+ * Structural stand-in for `@ui5/server`'s `MiddlewareUtil` exposing both
+ * `getRootPath()` and `getSourcePath()`. `sourcePath` defaults to `rootPath`
+ * so callers that don't care about the distinction keep working.
  */
 export function createMiddlewareUtil(
 	rootPath: string,

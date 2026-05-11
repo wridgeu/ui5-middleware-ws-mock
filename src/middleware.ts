@@ -62,13 +62,10 @@ interface FactoryParameters {
 		middlewareName?: string;
 	};
 	/**
-	 * `@ui5/server/middleware/MiddlewareUtil` instance. Structural subset:
-	 * @ui5/server ships no type declarations we can pull in. We use
-	 * `getProject().getRootPath()` to anchor a `rootPath` override, and prefer
-	 * `getProject().getSourcePath()` (both available since specVersion 3.0)
-	 * as the default root — typically `<root>/webapp/`, honoring any custom
-	 * `resources.configuration.paths.webapp` from `ui5.yaml`. The util
-	 * exposes more methods per the UI5 tooling docs.
+	 * `@ui5/server/middleware/MiddlewareUtil` instance (specVersion 3.0+).
+	 * Structural subset; @ui5/server ships no type declarations. We use
+	 * `getRootPath()` to anchor a `rootPath` override and `getSourcePath()`
+	 * as the default handler root.
 	 */
 	middlewareUtil: {
 		getProject(): {
@@ -84,26 +81,16 @@ interface HookCallbackArgs {
 }
 
 /**
- * Resolves the effective root directory that `routes[].handler` paths are
- * resolved against.
+ * Resolves the effective root that `routes[].handler` paths resolve against:
  *
- *   1. `configuration.rootPath` (if set): resolved relative to the project root,
- *      so `"."` keeps the legacy project-root behavior and `"test/wsmock"`
- *      rebases under that subfolder. Absolute paths pass through.
+ *   1. `configuration.rootPath` (if set): resolved relative to the project root.
+ *      `"."` keeps the legacy project-root behavior; absolute paths pass through.
  *   2. Otherwise: the UI5 project's source path — typically `<root>/webapp/`
- *      for Application projects, honoring any `resources.configuration.paths.webapp`
- *      override in `ui5.yaml`.
+ *      for Application projects.
  *
- * Only Application projects implement `getSourcePath()` in `@ui5/project`;
- * Library/Module/ThemeLibrary throw `"getSourcePath must be implemented by
- * subclass"`. That throw is the intended signal that this middleware was
- * attached to a project type it does not target — set `configuration.rootPath`
- * explicitly on those project types to bypass the source-path lookup. We do
- * not silently fall back to the project root, because doing so would mask a
- * configuration mistake (handlers would resolve under a directory the user
- * never asked for) and diverges from how other UI5 middlewares treat the
- * `getSourcePath()` contract — see e.g. `@sap-ux/preview-middleware` and
- * `ui5-middleware-approuter`.
+ * `getSourcePath()` is implemented only on Application projects in
+ * `@ui5/project`; Library/Module/ThemeLibrary throw. The throw propagates so
+ * the misconfiguration surfaces loudly; set `configuration.rootPath` to bypass.
  */
 function resolveHandlerRoot(
 	project: ReturnType<FactoryParameters["middlewareUtil"]["getProject"]>,
@@ -306,10 +293,9 @@ export default async function wsMock({
 		log.warn("[ws-mock] no routes configured; middleware is a no-op");
 	}
 
-	// Anchor handler resolution at the project's declared root (specVersion 3.0+;
-	// this extension is 4.0) so paths are independent of where `ui5 serve` was
-	// launched from. The effective root — and the fallbacks for older shims —
-	// are documented on `resolveHandlerRoot`.
+	// Anchor handler resolution at the project's source path (or the configured
+	// rootPath override) so paths are independent of where `ui5 serve` was
+	// launched from. See `resolveHandlerRoot` for the precedence rules.
 	const project = middlewareUtil.getProject();
 	const handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
 	log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
