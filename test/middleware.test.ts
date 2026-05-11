@@ -631,10 +631,8 @@ describe("ws-mock middleware", () => {
 	// from arrow functions so it never tripped this; the class-based logger
 	// below exercises the receiver requirement.
 	it("defaults handler root to the project's source path when rootPath is omitted", async () => {
-		// Source path = repo root + 'test'. With no rootPath set, a bare handler
-		// path 'fixtures/handlers/echo.ts' must resolve under that source path
-		// (repo root + 'test/fixtures/handlers/echo.ts'), not under the project
-		// root, otherwise the route would fail to load.
+		// Source path = repo root + 'test'. A bare handler 'fixtures/handlers/echo.ts'
+		// must resolve under that source path, not under the project root.
 		const sourcePath = resolvePath(REPO_ROOT, "test");
 		const { log, entries } = createCapturedLogger();
 		await wsMock({
@@ -673,10 +671,8 @@ describe("ws-mock middleware", () => {
 		});
 		const expectedRoot = resolvePath(REPO_ROOT, "test/fixtures");
 		const expectedAbs = resolvePath(expectedRoot, "handlers/echo.ts");
-		// The verbose root-path line and the per-route absolute path are part
-		// of the diagnostic contract — they're how operators verify the effective
-		// resolution when a handler load fails. A refactor that drops either of
-		// them should fail this test.
+		// The verbose root line and per-route absolute path are the diagnostic
+		// contract — a refactor that drops either should fail this test.
 		expect(
 			entries.find(
 				(e) =>
@@ -700,14 +696,9 @@ describe("ws-mock middleware", () => {
 	});
 
 	it("propagates the getSourcePath() throw on non-Application projects when rootPath is omitted", async () => {
-		// In `@ui5/project`, only Application projects implement getSourcePath();
-		// Library/Module/ThemeLibrary throw `"getSourcePath must be implemented
-		// by subclass"`. We let the throw propagate so the user gets a loud,
-		// actionable signal that this middleware was attached to a project type
-		// it does not target. The escape hatch is to set `configuration.rootPath`
-		// explicitly (covered by the rootPath-override test above). A silent
-		// project-root fallback would resolve handlers under a directory the
-		// user never asked for and mask the misconfiguration.
+		// Library/Module/ThemeLibrary throw from getSourcePath() in `@ui5/project`.
+		// We let it propagate so the misconfiguration surfaces; the documented
+		// escape hatch is `configuration.rootPath` (next test).
 		await expect(
 			wsMock({
 				log: createCapturedLogger().log,
@@ -731,9 +722,8 @@ describe("ws-mock middleware", () => {
 	});
 
 	it("rootPath override bypasses getSourcePath() entirely on non-Application projects", async () => {
-		// Companion to the throw test: the documented escape hatch. With
-		// rootPath set, getSourcePath() must never be called, so even a
-		// project type that throws from it loads handlers cleanly.
+		// Companion to the throw test: with rootPath set, getSourcePath() is
+		// never called, so a project type that throws from it still loads cleanly.
 		const { log, entries } = createCapturedLogger();
 		await wsMock({
 			log,
