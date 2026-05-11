@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.2.1...v0.3.0) (2026-05-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **middleware:** handler paths now resolve under `<project>/webapp/` by default instead of the project root. Existing configs typically need a one-line tweak: either drop a now-redundant `webapp/` prefix from each `handler` value (so `./webapp/wsmock/foo.ts` becomes `wsmock/foo.ts`), or pin `rootPath: "."` to keep the previous project-root resolution unchanged. Configs that already used bare paths under `webapp/` (e.g. `handler: webapp/wsmock/foo.ts`) will silently resolve to a doubled `webapp/webapp/...` path under the new default and fail to load — same one-line fix applies.
+
+### Bug Fixes
+
+* **middleware:** catch getSourcePath() throws on non-Application projects ([45ca45f](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/45ca45f5db618463362413e57fc355c5b21e3490))
+* **middleware:** default handler resolution to source path, add rootPath ([ac5c7c8](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/ac5c7c80567a326896ddbd8546bc44fb7d9fc344))
+* **middleware:** drop getSourcePath() fallback, let it throw on non-Application projects ([aea43cc](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/aea43cc5afee78a7b38b623a9ba80b2bd7dfdd7f))
+* **middleware:** skip handler-root resolution when routes is empty ([df770cc](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/df770cc99680ac0ddfd5880501926ec1f221738d))
+
 ## [0.2.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.2.0...v0.2.1) (2026-05-08)
 
 
