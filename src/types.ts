@@ -142,8 +142,10 @@ export interface WebSocketRoute {
 	/** Express-style mount path, e.g. `/ws/foo`. */
 	mountPath: string;
 	/**
-	 * Path to the handler module, relative to the project root (the directory
-	 * containing `ui5.yaml`).
+	 * Path to the handler module, resolved against the middleware's effective
+	 * root path. The default root is the UI5 project's source path (typically
+	 * `webapp/`, honoring any custom `resources.configuration.paths.webapp`
+	 * from `ui5.yaml`); set `configuration.rootPath` to override.
 	 */
 	handler: string;
 }
@@ -155,4 +157,18 @@ export interface WebSocketMiddlewareConfiguration {
 	 * path and the handler module that drives it.
 	 */
 	routes: WebSocketRoute[];
+	/**
+	 * Override the root directory that `routes[].handler` paths resolve
+	 * against. Resolved relative to the project root (the directory containing
+	 * `ui5.yaml`); absolute paths are honored as-is.
+	 *
+	 * When omitted, the root is the UI5 project's source path
+	 * (`middlewareUtil.getProject().getSourcePath()`, typically `webapp/`).
+	 * Set this when handler modules live outside the app source folder, e.g.
+	 * `rootPath: "."` for handlers next to `ui5.yaml`, or
+	 * `rootPath: "test/wsmock"` for a dedicated test layout.
+	 *
+	 * Mirrors `ui5-middleware-servestatic`'s `rootPath` semantics.
+	 */
+	rootPath?: string;
 }
