@@ -725,6 +725,40 @@ describe("ws-mock middleware", () => {
 		).toBeUndefined();
 	});
 
+	it("falls back to the project root when getSourcePath() throws", async () => {
+		// In `@ui5/project`, only Application projects implement getSourcePath();
+		// Library/Module/ThemeLibrary throw `"getSourcePath must be implemented
+		// by subclass"`. The middleware must catch that and fall back to the
+		// project root rather than surface the error and refuse to load.
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{ mountPath: "/ws/throws", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: {
+				getProject: () => ({
+					getRootPath: () => REPO_ROOT,
+					getSourcePath: () => {
+						throw new Error("getSourcePath must be implemented by subclass");
+					},
+				}),
+			},
+		});
+		expect(
+			entries.find((e) => e.level === "info" && String(e.args[0]).includes("handler loaded")),
+		).toBeDefined();
+		expect(
+			entries.find(
+				(e) => e.level === "error" && String(e.args[0]).includes("handler load failed"),
+			),
+		).toBeUndefined();
+	});
+
 	it("ctx.log.verbose invokes the host logger's verbose method with the correct `this`", async () => {
 		const calls: { level: string; args: unknown[]; this: unknown }[] = [];
 		class ClassLogger {
