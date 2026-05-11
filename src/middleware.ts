@@ -73,7 +73,7 @@ interface FactoryParameters {
 	middlewareUtil: {
 		getProject(): {
 			getRootPath(): string;
-			getSourcePath?(): string;
+			getSourcePath(): string;
 		};
 	};
 }
@@ -93,29 +93,26 @@ interface HookCallbackArgs {
  *   2. Otherwise: the UI5 project's source path — typically `<root>/webapp/`
  *      for Application projects, honoring any `resources.configuration.paths.webapp`
  *      override in `ui5.yaml`.
- *   3. Fallback: the project root. Triggered when a custom `MiddlewareUtil`
- *      shim does not expose `getSourcePath()`, or when the project type does
- *      not implement it (Library/Module/ThemeLibrary throw — only Application
- *      projects implement `getSourcePath()` in `@ui5/project`).
+ *
+ * Only Application projects implement `getSourcePath()` in `@ui5/project`;
+ * Library/Module/ThemeLibrary throw `"getSourcePath must be implemented by
+ * subclass"`. That throw is the intended signal that this middleware was
+ * attached to a project type it does not target — set `configuration.rootPath`
+ * explicitly on those project types to bypass the source-path lookup. We do
+ * not silently fall back to the project root, because doing so would mask a
+ * configuration mistake (handlers would resolve under a directory the user
+ * never asked for) and diverges from how other UI5 middlewares treat the
+ * `getSourcePath()` contract — see e.g. `@sap-ux/preview-middleware` and
+ * `ui5-middleware-approuter`.
  */
 function resolveHandlerRoot(
 	project: ReturnType<FactoryParameters["middlewareUtil"]["getProject"]>,
 	rootPathOverride: string | undefined,
 ): string {
-	const projectRoot = project.getRootPath();
 	if (rootPathOverride !== undefined) {
-		return resolve(projectRoot, rootPathOverride);
+		return resolve(project.getRootPath(), rootPathOverride);
 	}
-	if (typeof project.getSourcePath === "function") {
-		try {
-			return project.getSourcePath();
-		} catch {
-			// Non-Application project types (Library/Module/ThemeLibrary) throw
-			// from getSourcePath(); fall through to the project-root fallback so
-			// the middleware stays usable on those project types.
-		}
-	}
-	return projectRoot;
+	return project.getSourcePath();
 }
 
 /**
