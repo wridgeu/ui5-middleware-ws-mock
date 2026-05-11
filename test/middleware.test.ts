@@ -672,7 +672,7 @@ describe("ws-mock middleware", () => {
 		const expectedRoot = resolvePath(REPO_ROOT, "test/fixtures");
 		const expectedAbs = resolvePath(expectedRoot, "handlers/echo.ts");
 		// The verbose root line and per-route absolute path are the diagnostic
-		// contract — a refactor that drops either should fail this test.
+		// contract; a refactor that drops either should fail this test.
 		expect(
 			entries.find(
 				(e) =>
