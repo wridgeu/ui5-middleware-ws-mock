@@ -630,11 +630,14 @@ describe("ws-mock middleware", () => {
 	// undefined (reading '_emitOrLog')`. The capture-helper logger is built
 	// from arrow functions so it never tripped this; the class-based logger
 	// below exercises the receiver requirement.
-	it("defaults handler root to the project's source path when rootPath is omitted", async () => {
-		// Source path = repo root + 'test'. A bare handler 'fixtures/handlers/echo.ts'
-		// must resolve under that source path, not under the project root.
+	it("defaults handler resolution to the project's source path: a bare handler under sourcePath roundtrips a WebSocket connection", async () => {
+		// Set sourcePath to <repo>/test and configure a bare handler relative
+		// to it. If resolution defaults to the source path (correct), the echo
+		// handler loads and the client receives READY + ECHO:ping. If it ever
+		// fell back to the project root, '<repo>/fixtures/handlers/echo.ts'
+		// would not exist and the upgrade would be refused with close code 1011.
 		const sourcePath = resolvePath(REPO_ROOT, "test");
-		const { log, entries } = createCapturedLogger();
+		const { log } = createCapturedLogger();
 		await wsMock({
 			log,
 			options: {
@@ -644,21 +647,26 @@ describe("ws-mock middleware", () => {
 			},
 			middlewareUtil: createMiddlewareUtil(REPO_ROOT, sourcePath),
 		});
-		expect(
-			entries.find((e) => e.level === "info" && String(e.args[0]).includes("handler loaded")),
-		).toBeDefined();
-		expect(
-			entries.find(
-				(e) => e.level === "error" && String(e.args[0]).includes("handler load failed"),
-			),
-		).toBeUndefined();
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/srcdef`);
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		expect((await ready)[0]).toBe("READY");
+
+		const echoBack = waitForMessages(ws, 1);
+		ws.send("ping");
+		expect((await echoBack)[0]).toBe("ECHO:ping");
+
+		ws.close();
 	});
 
-	it("configuration.rootPath overrides the source-path default and is resolved from project root", async () => {
-		// rootPath: "test/fixtures" rebases handler resolution. The handler entry
-		// then only needs to spell the path from there; sourcePath is ignored.
-		const sourcePath = resolvePath(REPO_ROOT, "webapp"); // intentionally wrong dir
-		const { log, entries } = createCapturedLogger();
+	it("configuration.rootPath rebases handler resolution from the project root and overrides the source path", async () => {
+		// sourcePath is intentionally wrong (no 'webapp/' in this repo). The
+		// handler value is given relative to rootPath: "test/fixtures". If the
+		// override weren't honored, the load would fail and the upgrade close.
+		const wrongSourcePath = resolvePath(REPO_ROOT, "webapp");
+		const { log } = createCapturedLogger();
 		await wsMock({
 			log,
 			options: {
@@ -667,64 +675,56 @@ describe("ws-mock middleware", () => {
 					routes: [{ mountPath: "/ws/rooted", handler: "handlers/echo.ts" }],
 				},
 			},
-			middlewareUtil: createMiddlewareUtil(REPO_ROOT, sourcePath),
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT, wrongSourcePath),
 		});
-		const expectedRoot = resolvePath(REPO_ROOT, "test/fixtures");
-		const expectedAbs = resolvePath(expectedRoot, "handlers/echo.ts");
-		// The verbose root line and per-route absolute path are the diagnostic
-		// contract; a refactor that drops either should fail this test.
-		expect(
-			entries.find(
-				(e) =>
-					e.level === "verbose" &&
-					String(e.args[0]).includes(`resolving handler paths against ${expectedRoot}`),
-			),
-		).toBeDefined();
-		expect(
-			entries.find(
-				(e) =>
-					e.level === "info" &&
-					String(e.args[0]).includes("handler loaded") &&
-					String(e.args[0]).includes(expectedAbs),
-			),
-		).toBeDefined();
-		expect(
-			entries.find(
-				(e) => e.level === "error" && String(e.args[0]).includes("handler load failed"),
-			),
-		).toBeUndefined();
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/rooted`);
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		expect((await ready)[0]).toBe("READY");
+
+		ws.close();
 	});
 
-	it("propagates the getSourcePath() throw on non-Application projects when rootPath is omitted", async () => {
-		// Library/Module/ThemeLibrary throw from getSourcePath() in `@ui5/project`.
-		// We let it propagate so the misconfiguration surfaces; the documented
-		// escape hatch is `configuration.rootPath` (next test).
+	it("Module-type projects: factory rejects when getSourcePath throws and no rootPath is configured", async () => {
+		// In @ui5/project v4, only the Module Project type throws from
+		// getSourcePath (Application returns webapp/, Library/ThemeLibrary
+		// return src/). The throw must propagate so the misconfiguration
+		// surfaces loudly; the documented escape hatch is configuration.rootPath.
+		const getSourcePath = vi.fn(() => {
+			throw new Error("Projects of type module have more than one source path");
+		});
 		await expect(
 			wsMock({
 				log: createCapturedLogger().log,
 				options: {
 					configuration: {
-						routes: [
-							{ mountPath: "/ws/throws", handler: "test/fixtures/handlers/echo.ts" },
-						],
+						// Handler value is irrelevant — resolution throws before
+						// any handler module is touched.
+						routes: [{ mountPath: "/ws/throws", handler: "irrelevant.ts" }],
 					},
 				},
 				middlewareUtil: {
 					getProject: () => ({
 						getRootPath: () => REPO_ROOT,
-						getSourcePath: () => {
-							throw new Error("getSourcePath must be implemented by subclass");
-						},
+						getSourcePath,
 					}),
 				},
 			}),
-		).rejects.toThrow(/getSourcePath must be implemented by subclass/);
+		).rejects.toThrow(/more than one source path/);
+		expect(getSourcePath).toHaveBeenCalledTimes(1);
 	});
 
-	it("rootPath override bypasses getSourcePath() entirely on non-Application projects", async () => {
-		// Companion to the throw test: with rootPath set, getSourcePath() is
-		// never called, so a project type that throws from it still loads cleanly.
-		const { log, entries } = createCapturedLogger();
+	it("Module-type projects: rootPath override skips getSourcePath and the handler is reachable", async () => {
+		// Companion to the previous test: with rootPath set, getSourcePath()
+		// must never be called, so a project type that throws from it still
+		// loads cleanly. Proves both with a spy (call count == 0) and an
+		// end-to-end WebSocket roundtrip.
+		const getSourcePath = vi.fn(() => {
+			throw new Error("Projects of type module have more than one source path");
+		});
+		const { log } = createCapturedLogger();
 		await wsMock({
 			log,
 			options: {
@@ -736,20 +736,44 @@ describe("ws-mock middleware", () => {
 			middlewareUtil: {
 				getProject: () => ({
 					getRootPath: () => REPO_ROOT,
-					getSourcePath: () => {
-						throw new Error("getSourcePath must be implemented by subclass");
-					},
+					getSourcePath,
 				}),
 			},
 		});
-		expect(
-			entries.find((e) => e.level === "info" && String(e.args[0]).includes("handler loaded")),
-		).toBeDefined();
-		expect(
-			entries.find(
-				(e) => e.level === "error" && String(e.args[0]).includes("handler load failed"),
-			),
-		).toBeUndefined();
+		expect(getSourcePath).not.toHaveBeenCalled();
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/escaped`);
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		expect((await ready)[0]).toBe("READY");
+
+		ws.close();
+	});
+
+	it("empty routes is a no-op: factory resolves on a Module-type project without calling getSourcePath", async () => {
+		// Behavioral guarantee: a middleware declaration with zero routes (a
+		// documented no-op) must not crash on Module-type projects. The shape
+		// of that crash, pre-fix, was an eager call into getSourcePath() that
+		// threw. We assert (a) the factory resolves cleanly, (b) the spy is
+		// never invoked. Whether getProject()/getRootPath() are called too is
+		// an implementation detail — we don't bind to it.
+		const getSourcePath = vi.fn(() => {
+			throw new Error("Projects of type module have more than one source path");
+		});
+		await expect(
+			wsMock({
+				log: createCapturedLogger().log,
+				options: { configuration: { routes: [] } },
+				middlewareUtil: {
+					getProject: () => ({
+						getRootPath: () => REPO_ROOT,
+						getSourcePath,
+					}),
+				},
+			}),
+		).resolves.toBeDefined();
+		expect(getSourcePath).not.toHaveBeenCalled();
 	});
 
 	it("ctx.log.verbose invokes the host logger's verbose method with the correct `this`", async () => {
