@@ -630,6 +630,101 @@ describe("ws-mock middleware", () => {
 	// undefined (reading '_emitOrLog')`. The capture-helper logger is built
 	// from arrow functions so it never tripped this; the class-based logger
 	// below exercises the receiver requirement.
+	it("defaults handler root to the project's source path when rootPath is omitted", async () => {
+		// Source path = repo root + 'test'. With no rootPath set, a bare handler
+		// path 'fixtures/handlers/echo.ts' must resolve under that source path
+		// (repo root + 'test/fixtures/handlers/echo.ts'), not under the project
+		// root, otherwise the route would fail to load.
+		const sourcePath = resolvePath(REPO_ROOT, "test");
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [{ mountPath: "/ws/srcdef", handler: "fixtures/handlers/echo.ts" }],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT, sourcePath),
+		});
+		expect(
+			entries.find((e) => e.level === "info" && String(e.args[0]).includes("handler loaded")),
+		).toBeDefined();
+		expect(
+			entries.find(
+				(e) => e.level === "error" && String(e.args[0]).includes("handler load failed"),
+			),
+		).toBeUndefined();
+	});
+
+	it("configuration.rootPath overrides the source-path default and is resolved from project root", async () => {
+		// rootPath: "test/fixtures" rebases handler resolution. The handler entry
+		// then only needs to spell the path from there; sourcePath is ignored.
+		const sourcePath = resolvePath(REPO_ROOT, "webapp"); // intentionally wrong dir
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					rootPath: "test/fixtures",
+					routes: [{ mountPath: "/ws/rooted", handler: "handlers/echo.ts" }],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT, sourcePath),
+		});
+		const expectedRoot = resolvePath(REPO_ROOT, "test/fixtures");
+		const expectedAbs = resolvePath(expectedRoot, "handlers/echo.ts");
+		// The verbose root-path line and the per-route absolute path are part
+		// of the diagnostic contract — they're how operators verify the effective
+		// resolution when a handler load fails. A refactor that drops either of
+		// them should fail this test.
+		expect(
+			entries.find(
+				(e) =>
+					e.level === "verbose" &&
+					String(e.args[0]).includes(`resolving handler paths against ${expectedRoot}`),
+			),
+		).toBeDefined();
+		expect(
+			entries.find(
+				(e) =>
+					e.level === "info" &&
+					String(e.args[0]).includes("handler loaded") &&
+					String(e.args[0]).includes(expectedAbs),
+			),
+		).toBeDefined();
+		expect(
+			entries.find(
+				(e) => e.level === "error" && String(e.args[0]).includes("handler load failed"),
+			),
+		).toBeUndefined();
+	});
+
+	it("falls back to the project root when the util omits getSourcePath()", async () => {
+		// Older or custom MiddlewareUtil shims may not expose getSourcePath().
+		// In that case the middleware must fall back to the project root rather
+		// than crash, so handler paths still resolve.
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{ mountPath: "/ws/fallback", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: { getProject: () => ({ getRootPath: () => REPO_ROOT }) },
+		});
+		expect(
+			entries.find((e) => e.level === "info" && String(e.args[0]).includes("handler loaded")),
+		).toBeDefined();
+		expect(
+			entries.find(
+				(e) => e.level === "error" && String(e.args[0]).includes("handler load failed"),
+			),
+		).toBeUndefined();
+	});
+
 	it("ctx.log.verbose invokes the host logger's verbose method with the correct `this`", async () => {
 		const calls: { level: string; args: unknown[]; this: unknown }[] = [];
 		class ClassLogger {

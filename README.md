@@ -52,14 +52,14 @@ The transport is plain WebSocket. When the client offers it, the middleware also
               configuration:
                   routes:
                       - mountPath: /ws/foo
-                        handler: ./wsmock/handlers/foo.ts
+                        handler: wsmock/handlers/foo.ts
     ```
 
-    Clients connect to `ws://<host>:<port><mountPath>`. `handler` resolves relative to the directory containing `ui5.yaml`.
+    Clients connect to `ws://<host>:<port><mountPath>`. `handler` resolves under the UI5 project's source path (typically `webapp/`), so the example above loads `<project>/webapp/wsmock/handlers/foo.ts`. For handlers outside the source folder, set `configuration.rootPath` (see [Configuration](#configuration)).
 
     The middleware's `kind: extension` declaration ships in the package and is auto-discovered by `@ui5/server`; no separate extension file is required in the consuming application.
 
-3. Write a handler module at `./wsmock/handlers/foo.ts`. `default`-export a `WebSocketHandler`:
+3. Write a handler module at `webapp/wsmock/handlers/foo.ts`. `default`-export a `WebSocketHandler`:
 
     ```typescript
     import type { WebSocketHandler } from "ui5-middleware-ws-mock";
@@ -81,41 +81,104 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 4. Run `npm start`. The server log prints one pair of lines per configured route:
 
     ```text
-    [ws-mock:/ws/foo] handler loaded from ./wsmock/handlers/foo.ts
+    [ws-mock] resolving handler paths against /abs/path/to/project/webapp
+    [ws-mock:/ws/foo] handler loaded from wsmock/handlers/foo.ts (/abs/path/to/project/webapp/wsmock/handlers/foo.ts)
     [ws-mock] listening for upgrades on: /ws/foo
     ```
 
+    The first line is logged at `verbose` and shows the effective root path; the per-route line also includes the absolute resolved path, so a handler load failure points directly at the file the middleware tried to import.
+
 > [!TIP]
 > **Restart `ui5 serve` after editing configuration or handlers.** Livereload covers `webapp/`-side code only. Changes to `ui5.yaml` (new routes, renamed mount paths) and changes to handler modules are picked up at the next server boot. To automate this, run `ui5 serve` under a process supervisor such as `tsx watch` or `nodemon --watch <handlers-dir>`.
+
+## TypeScript: importing types from a CommonJS-context project
+
+This package is published ESM-only — both the runtime (`"type": "module"`) and the type declarations (`dist/index.d.ts` exposed under a single `default` export condition). When the importing file is resolved in a CommonJS context (typical with `"module": "commonjs"`, `"node10"`, or `"node16"`/`"nodenext"` when the importing file's nearest `package.json` declares `"type": "commonjs"` or omits it), `tsc` cannot pick up an ESM-only type declaration via a plain `import type`. The fix it suggests is the `resolution-mode` import attribute:
+
+```typescript
+import type { PcpFrame, WebSocketHandler } from "ui5-middleware-ws-mock" with {
+	"resolution-mode": "import",
+};
+```
+
+The attribute is harmless — it tells `tsc` to resolve the specifier as if the importing file were ESM — but two settings avoid needing it altogether:
+
+- **Make the consuming TS context ESM.** Set `"type": "module"` in the consuming project's `package.json` and `"module": "nodenext"` (or `"bundler"`) plus `"moduleResolution": "nodenext"` (or `"bundler"`) in its `tsconfig.json`.
+- **Use `"moduleResolution": "bundler"`** when a UI bundler (Vite, esbuild, etc.) handles module loading. Bundler-mode resolution does not enforce the ESM/CJS split.
+
+This package does not ship a `.d.cts` shadow because `tsc` has no native single-pass dual-emit, and the post-build glue (a copy script or a build tool such as `tshy`) was judged not worth the build-system surface for a package this small.
 
 ## Configuration
 
 The `configuration` block under the `customMiddleware` entry accepts:
 
-| Key                  | Type               | Required | Description                                                                                                                                                |
-| -------------------- | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `routes`             | `WebSocketRoute[]` | yes      | One entry per mount path. Each entry declares a path and the file that provides the handler module.                                                        |
-| `routes[].mountPath` | `string`           | yes      | Path such as `/ws/foo`. Matched against the upgrade request pathname literally; no parameter patterns. Clients connect to `ws://<host>:<port><mountPath>`. |
-| `routes[].handler`   | `string`           | yes      | Path to the handler module, resolved relative to the directory containing `ui5.yaml`. Exactly one handler per route.                                       |
+| Key                  | Type               | Required | Description                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------- | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `rootPath`           | `string`           | no       | Override the root directory that `routes[].handler` paths resolve against. Resolved relative to the project root (the directory containing `ui5.yaml`); absolute paths are honored as-is. Defaults to the UI5 project's source path (typically `webapp/`, honoring `resources.configuration.paths.webapp`). Mirrors `ui5-middleware-servestatic`'s `rootPath` semantics. |
+| `routes`             | `WebSocketRoute[]` | yes      | One entry per mount path. Each entry declares a path and the file that provides the handler module.                                                                                                                                                                                                                                                                      |
+| `routes[].mountPath` | `string`           | yes      | Path such as `/ws/foo`. Matched against the upgrade request pathname literally; no parameter patterns. Clients connect to `ws://<host>:<port><mountPath>`.                                                                                                                                                                                                               |
+| `routes[].handler`   | `string`           | yes      | Path to the handler module, resolved against the effective root (see `rootPath` above). Absolute paths are honored as-is. Exactly one handler per route.                                                                                                                                                                                                                 |
 
-A minimal single-route configuration:
+### `rootPath` resolution matrix
+
+The same `handler` value resolves to a different file depending on `rootPath`. All four forms are legal; pick the one that fits your project layout. Assume a project rooted at `<project>/` (the directory containing `ui5.yaml`).
+
+**Default (no `rootPath`).** Handler paths resolve under the UI5 source path — typically `<project>/webapp/`. Best fit for handlers that ship inside the deployed app:
 
 ```yaml
 configuration:
     routes:
         - mountPath: /ws/foo
-          handler: ./wsmock/handlers/foo.ts
+          handler: wsmock/handlers/foo.ts
+# loads <project>/webapp/wsmock/handlers/foo.ts
 ```
 
-Multiple routes in the same middleware entry are supported. Each route loads its own handler module:
+**`rootPath: "."`.** Resolves from the project root (where `ui5.yaml` lives). Best fit when handlers live alongside `ui5.yaml`, not inside `webapp/`:
+
+```yaml
+configuration:
+    rootPath: "."
+    routes:
+        - mountPath: /ws/foo
+          handler: wsmock/handlers/foo.ts
+# loads <project>/wsmock/handlers/foo.ts
+```
+
+**Relative `rootPath`.** Resolves under a subdirectory of the project root. Best fit for keeping mocks alongside other test artifacts:
+
+```yaml
+configuration:
+    rootPath: test/wsmock
+    routes:
+        - mountPath: /ws/foo
+          handler: handlers/foo.ts
+# loads <project>/test/wsmock/handlers/foo.ts
+```
+
+**Absolute `rootPath`.** Resolves verbatim, ignoring the project root. Best fit for handler bundles shared across multiple apps in a monorepo:
+
+```yaml
+configuration:
+    rootPath: /shared/wsmocks
+    routes:
+        - mountPath: /ws/foo
+          handler: foo.ts
+# loads /shared/wsmocks/foo.ts
+```
+
+On Windows, quote absolute paths to keep YAML happy: `rootPath: "C:/shared/wsmocks"` (forward slashes work fine; backslashes need to be doubled or the string quoted).
+
+### Multiple routes
+
+Multiple routes in the same middleware entry share the resolved root. Each loads its own handler:
 
 ```yaml
 configuration:
     routes:
         - mountPath: /ws/foo
-          handler: ./wsmock/handlers/foo.ts
+          handler: wsmock/handlers/foo.ts
         - mountPath: /ws/bar
-          handler: ./wsmock/handlers/bar.ts
+          handler: wsmock/handlers/bar.ts
 ```
 
 ## Wire layer: WebSocket and PCP
@@ -432,7 +495,7 @@ The cost is the coupling to the hook trick. A future UI5 tooling major bump that
 - **One handler module per route.** No chaining or composition is performed by the middleware. Layered behavior should be composed inside the handler module.
 - **No dynamic / parametrized mount paths.** `mountPath` is matched literally against the incoming request pathname. UI5-style route patterns with optional or mandatory parameters are not supported. Per-resource routing should be derived from `req.url` (query string or path segments) inside the handler.
 - **`ts-node` interference.** `sap-fe-mockserver` registers a global `ts-node` hook that hijacks `require()` for `.ts` files. Handler modules are loaded via dynamic `import()` to sidestep the hook.
-- **Requires specVersion 3.0+** on the middleware extension to use `middlewareUtil.getProject().getRootPath()` for resolving handler paths. This middleware declares `specVersion: "4.0"`.
+- **Requires specVersion 3.0+** on the middleware extension to use `middlewareUtil.getProject().getRootPath()` (and `getSourcePath()`) for resolving handler paths. This middleware declares `specVersion: "4.0"`.
 
 ## Related
 

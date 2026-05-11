@@ -43,10 +43,23 @@ export function resetHookCapture(): void {
 	capturedHookCallback = null;
 }
 
-export function createMiddlewareUtil(rootPath: string): {
-	getProject(): { getRootPath(): string };
+/**
+ * Builds a structural stand-in for `@ui5/server`'s `MiddlewareUtil` with both
+ * `getRootPath()` and `getSourcePath()` reachable. Defaults `sourcePath` to
+ * `rootPath` so existing tests that pass `handler` paths from the repo root
+ * keep resolving the same way; pass `sourcePath` explicitly to exercise the
+ * source-path-default resolution behavior.
+ */
+export function createMiddlewareUtil(
+	rootPath: string,
+	sourcePath: string = rootPath,
+): {
+	getProject(): { getRootPath(): string; getSourcePath(): string };
 } {
 	return {
-		getProject: () => ({ getRootPath: () => rootPath }),
+		getProject: () => ({
+			getRootPath: () => rootPath,
+			getSourcePath: () => sourcePath,
+		}),
 	};
 }

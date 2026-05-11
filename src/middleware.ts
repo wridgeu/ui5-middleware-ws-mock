@@ -63,19 +63,51 @@ interface FactoryParameters {
 	};
 	/**
 	 * `@ui5/server/middleware/MiddlewareUtil` instance. Structural subset:
-	 * @ui5/server ships no type declarations we can pull in. We only use
-	 * `getProject().getRootPath()` (available since specVersion 3.0) to
-	 * resolve handler paths relative to the project root; the util exposes
-	 * more methods per the UI5 tooling docs.
+	 * @ui5/server ships no type declarations we can pull in. We use
+	 * `getProject().getRootPath()` to anchor a `rootPath` override, and prefer
+	 * `getProject().getSourcePath()` (both available since specVersion 3.0)
+	 * as the default root — typically `<root>/webapp/`, honoring any custom
+	 * `resources.configuration.paths.webapp` from `ui5.yaml`. The util
+	 * exposes more methods per the UI5 tooling docs.
 	 */
 	middlewareUtil: {
-		getProject(): { getRootPath(): string };
+		getProject(): {
+			getRootPath(): string;
+			getSourcePath?(): string;
+		};
 	};
 }
 
 interface HookCallbackArgs {
 	app: unknown;
 	server: Server;
+}
+
+/**
+ * Resolves the effective root directory that `routes[].handler` paths are
+ * resolved against.
+ *
+ *   1. `configuration.rootPath` (if set): resolved relative to the project root,
+ *      so `"."` keeps the legacy project-root behavior and `"test/wsmock"`
+ *      rebases under that subfolder. Absolute paths pass through.
+ *   2. Otherwise: the UI5 project's source path — typically `<root>/webapp/`,
+ *      and honoring any `resources.configuration.paths.webapp` override in
+ *      `ui5.yaml`.
+ *   3. Fallback: the project root, if a custom `MiddlewareUtil` shim does not
+ *      expose `getSourcePath()`.
+ */
+function resolveHandlerRoot(
+	project: ReturnType<FactoryParameters["middlewareUtil"]["getProject"]>,
+	rootPathOverride: string | undefined,
+): string {
+	const projectRoot = project.getRootPath();
+	if (rootPathOverride !== undefined) {
+		return resolve(projectRoot, rootPathOverride);
+	}
+	if (typeof project.getSourcePath === "function") {
+		return project.getSourcePath();
+	}
+	return projectRoot;
 }
 
 /**
@@ -88,8 +120,8 @@ interface HookCallbackArgs {
  * intercepts `require()` for `.ts` files and tries to load them as CJS. Going
  * through `import()` sidesteps the hook and uses Node's native type stripping.
  */
-async function loadHandler(projectRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
-	const absolute = resolve(projectRoot, route.handler);
+async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
+	const absolute = resolve(handlerRoot, route.handler);
 	try {
 		const mod = (await import(pathToFileURL(absolute).href)) as {
 			default?: WebSocketHandler;
@@ -269,20 +301,23 @@ export default async function wsMock({
 		log.warn("[ws-mock] no routes configured; middleware is a no-op");
 	}
 
-	// Use the project's declared root (ui5.yaml location) rather than
-	// `process.cwd()` so relative `handler:` paths resolve correctly regardless
-	// of which directory `ui5 serve` was launched from. Requires specVersion
-	// 3.0+ for `middlewareUtil.getProject()`; this extension is 4.0.
-	const projectRoot = middlewareUtil.getProject().getRootPath();
-	const loaded: LoadedRoute[] = await Promise.all(routes.map((r) => loadHandler(projectRoot, r)));
+	// Anchor handler resolution at the project's declared root (specVersion 3.0+;
+	// this extension is 4.0) so paths are independent of where `ui5 serve` was
+	// launched from. The effective root — and the fallbacks for older shims —
+	// are documented on `resolveHandlerRoot`.
+	const project = middlewareUtil.getProject();
+	const handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
+	log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
+	const loaded: LoadedRoute[] = await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)));
 	for (const entry of loaded) {
+		const absolute = resolve(handlerRoot, entry.route.handler);
 		if (entry.handler) {
 			log.info(
-				`[ws-mock:${entry.route.mountPath}] handler loaded from ${entry.route.handler}`,
+				`[ws-mock:${entry.route.mountPath}] handler loaded from ${entry.route.handler} (${absolute})`,
 			);
 		} else {
 			log.error(
-				`[ws-mock:${entry.route.mountPath}] handler load failed from ${entry.route.handler}:`,
+				`[ws-mock:${entry.route.mountPath}] handler load failed from ${entry.route.handler} (${absolute}):`,
 				entry.loadError,
 			);
 		}
