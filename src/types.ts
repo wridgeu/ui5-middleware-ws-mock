@@ -163,12 +163,10 @@ export interface WebSocketMiddlewareConfiguration {
 	 * `ui5.yaml`); absolute paths are honored as-is.
 	 *
 	 * When omitted, the root is the UI5 project's source path
-	 * (`middlewareUtil.getProject().getSourcePath()`, typically `webapp/`).
-	 * Set this when handler modules live outside the app source folder, e.g.
-	 * `rootPath: "."` for handlers next to `ui5.yaml`, or
+	 * (`middlewareUtil.getProject().getSourcePath()`, typically `webapp/` for
+	 * Application projects). Set this when handler modules live outside the app
+	 * source folder, e.g. `rootPath: "."` for handlers next to `ui5.yaml`, or
 	 * `rootPath: "test/wsmock"` for a dedicated test layout.
-	 *
-	 * Mirrors `ui5-middleware-servestatic`'s `rootPath` semantics.
 	 */
 	rootPath?: string;
 }

@@ -90,11 +90,13 @@ interface HookCallbackArgs {
  *   1. `configuration.rootPath` (if set): resolved relative to the project root,
  *      so `"."` keeps the legacy project-root behavior and `"test/wsmock"`
  *      rebases under that subfolder. Absolute paths pass through.
- *   2. Otherwise: the UI5 project's source path — typically `<root>/webapp/`,
- *      and honoring any `resources.configuration.paths.webapp` override in
- *      `ui5.yaml`.
- *   3. Fallback: the project root, if a custom `MiddlewareUtil` shim does not
- *      expose `getSourcePath()`.
+ *   2. Otherwise: the UI5 project's source path — typically `<root>/webapp/`
+ *      for Application projects, honoring any `resources.configuration.paths.webapp`
+ *      override in `ui5.yaml`.
+ *   3. Fallback: the project root. Triggered when a custom `MiddlewareUtil`
+ *      shim does not expose `getSourcePath()`, or when the project type does
+ *      not implement it (Library/Module/ThemeLibrary throw — only Application
+ *      projects implement `getSourcePath()` in `@ui5/project`).
  */
 function resolveHandlerRoot(
 	project: ReturnType<FactoryParameters["middlewareUtil"]["getProject"]>,
@@ -105,7 +107,13 @@ function resolveHandlerRoot(
 		return resolve(projectRoot, rootPathOverride);
 	}
 	if (typeof project.getSourcePath === "function") {
-		return project.getSourcePath();
+		try {
+			return project.getSourcePath();
+		} catch {
+			// Non-Application project types (Library/Module/ThemeLibrary) throw
+			// from getSourcePath(); fall through to the project-root fallback so
+			// the middleware stays usable on those project types.
+		}
 	}
 	return projectRoot;
 }
