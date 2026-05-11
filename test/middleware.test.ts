@@ -699,45 +699,48 @@ describe("ws-mock middleware", () => {
 		).toBeUndefined();
 	});
 
-	it("falls back to the project root when the util omits getSourcePath()", async () => {
-		// Older or custom MiddlewareUtil shims may not expose getSourcePath().
-		// In that case the middleware must fall back to the project root rather
-		// than crash, so handler paths still resolve.
-		const { log, entries } = createCapturedLogger();
-		await wsMock({
-			log,
-			options: {
-				configuration: {
-					routes: [
-						{ mountPath: "/ws/fallback", handler: "test/fixtures/handlers/echo.ts" },
-					],
-				},
-			},
-			middlewareUtil: { getProject: () => ({ getRootPath: () => REPO_ROOT }) },
-		});
-		expect(
-			entries.find((e) => e.level === "info" && String(e.args[0]).includes("handler loaded")),
-		).toBeDefined();
-		expect(
-			entries.find(
-				(e) => e.level === "error" && String(e.args[0]).includes("handler load failed"),
-			),
-		).toBeUndefined();
-	});
-
-	it("falls back to the project root when getSourcePath() throws", async () => {
+	it("propagates the getSourcePath() throw on non-Application projects when rootPath is omitted", async () => {
 		// In `@ui5/project`, only Application projects implement getSourcePath();
 		// Library/Module/ThemeLibrary throw `"getSourcePath must be implemented
-		// by subclass"`. The middleware must catch that and fall back to the
-		// project root rather than surface the error and refuse to load.
+		// by subclass"`. We let the throw propagate so the user gets a loud,
+		// actionable signal that this middleware was attached to a project type
+		// it does not target. The escape hatch is to set `configuration.rootPath`
+		// explicitly (covered by the rootPath-override test above). A silent
+		// project-root fallback would resolve handlers under a directory the
+		// user never asked for and mask the misconfiguration.
+		await expect(
+			wsMock({
+				log: createCapturedLogger().log,
+				options: {
+					configuration: {
+						routes: [
+							{ mountPath: "/ws/throws", handler: "test/fixtures/handlers/echo.ts" },
+						],
+					},
+				},
+				middlewareUtil: {
+					getProject: () => ({
+						getRootPath: () => REPO_ROOT,
+						getSourcePath: () => {
+							throw new Error("getSourcePath must be implemented by subclass");
+						},
+					}),
+				},
+			}),
+		).rejects.toThrow(/getSourcePath must be implemented by subclass/);
+	});
+
+	it("rootPath override bypasses getSourcePath() entirely on non-Application projects", async () => {
+		// Companion to the throw test: the documented escape hatch. With
+		// rootPath set, getSourcePath() must never be called, so even a
+		// project type that throws from it loads handlers cleanly.
 		const { log, entries } = createCapturedLogger();
 		await wsMock({
 			log,
 			options: {
 				configuration: {
-					routes: [
-						{ mountPath: "/ws/throws", handler: "test/fixtures/handlers/echo.ts" },
-					],
+					rootPath: "test/fixtures",
+					routes: [{ mountPath: "/ws/escaped", handler: "handlers/echo.ts" }],
 				},
 			},
 			middlewareUtil: {
