@@ -162,10 +162,12 @@ export interface WebSocketMiddlewareConfiguration {
 	 * Resolved relative to the project root (the directory containing
 	 * `ui5.yaml`); absolute paths pass through.
 	 *
-	 * Defaults to the UI5 project's source path (typically `webapp/` for
-	 * Application projects). Set this for handlers next to `ui5.yaml`
-	 * (`rootPath: "."`), under a test layout (`rootPath: "test/wsmock"`),
-	 * or on non-Application project types where `getSourcePath()` is unavailable.
+	 * Defaults to the UI5 project's source path: `webapp/` for Application
+	 * projects, `src/` for Library and ThemeLibrary projects (honoring any
+	 * overrides under `resources.configuration.paths` in `ui5.yaml`). Set
+	 * this for handlers next to `ui5.yaml` (`rootPath: "."`), under a test
+	 * layout (`rootPath: "test/wsmock"`), or on Module-type projects (whose
+	 * `getSourcePath()` throws because a Module has no single source path).
 	 */
 	rootPath?: string;
 }

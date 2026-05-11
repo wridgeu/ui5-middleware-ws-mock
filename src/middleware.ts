@@ -85,12 +85,11 @@ interface HookCallbackArgs {
  *
  *   1. `configuration.rootPath` (if set): resolved relative to the project root.
  *      `"."` keeps the legacy project-root behavior; absolute paths pass through.
- *   2. Otherwise: the UI5 project's source path (typically `<root>/webapp/`
- *      for Application projects).
- *
- * `getSourcePath()` is implemented only on Application projects in
- * `@ui5/project`; Library/Module/ThemeLibrary throw. The throw propagates so
- * the misconfiguration surfaces loudly; set `configuration.rootPath` to bypass.
+ *   2. Otherwise: the UI5 project's source path. Per `@ui5/project` v4:
+ *      Application returns `<root>/<webappPath>` (defaults to `webapp`),
+ *      Library and ThemeLibrary return `<root>/<srcPath>` (defaults to `src`),
+ *      and Module throws (it has more than one source path). On Module
+ *      projects the throw propagates; set `configuration.rootPath` to bypass.
  */
 function resolveHandlerRoot(
 	project: ReturnType<FactoryParameters["middlewareUtil"]["getProject"]>,
@@ -296,10 +295,17 @@ export default async function wsMock({
 	// Anchor handler resolution at the project's source path (or the configured
 	// rootPath override) so paths are independent of where `ui5 serve` was
 	// launched from. See `resolveHandlerRoot` for the precedence rules.
-	const project = middlewareUtil.getProject();
-	const handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
-	log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
-	const loaded: LoadedRoute[] = await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)));
+	// Resolve lazily: with no routes there's nothing to load, and skipping the
+	// resolve avoids crashing on Module-type projects (whose getSourcePath()
+	// throws) when this middleware is declared but unused.
+	let handlerRoot = "";
+	let loaded: LoadedRoute[] = [];
+	if (routes.length > 0) {
+		const project = middlewareUtil.getProject();
+		handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
+		log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
+		loaded = await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)));
+	}
 	for (const entry of loaded) {
 		const absolute = resolve(handlerRoot, entry.route.handler);
 		if (entry.handler) {
