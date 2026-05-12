@@ -219,7 +219,8 @@ function decodeMessage(raw: string, mode: WebSocketMode, log: WebSocketLog): Inb
 /**
  * Awaits a possibly-async handler callback, logs failures, and fans the error
  * out to the handler's optional `onError` hook. `onError` is best-effort: a
- * throw or rejection from inside it is logged but does not re-enter the hook.
+ * throw or rejection from inside it is logged but does not trigger another
+ * `onError` call (would otherwise recurse).
  */
 function invoke(
 	name: string,
