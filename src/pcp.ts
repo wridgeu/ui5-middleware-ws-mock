@@ -35,6 +35,7 @@ const DEFAULT_BODY_TYPE = "text";
  * easy to delete by accident.
  */
 const UNESCAPE_PLACEHOLDER = "\u0008";
+const UNESCAPE_PLACEHOLDER_RE = new RegExp(UNESCAPE_PLACEHOLDER, "g");
 
 /** WebSocket subprotocol identifier for PCP v1.0. */
 export const SUBPROTOCOL = "v10.pcp.sap.com";
@@ -60,7 +61,7 @@ export function pcpUnescape(value: string): string {
 				.replace(/\\\\/g, UNESCAPE_PLACEHOLDER)
 				.replace(/\\:/g, ":")
 				.replace(/\\n/g, "\n")
-				.replace(new RegExp(UNESCAPE_PLACEHOLDER, "g"), "\\"),
+				.replace(UNESCAPE_PLACEHOLDER_RE, "\\"),
 		)
 		.join(UNESCAPE_PLACEHOLDER);
 }
@@ -74,11 +75,17 @@ const FIELD_REGEX = /((?:[^:\\]|(?:\\.))+):((?:[^:\\\n]|(?:\\.))*)/;
 export interface EncodeOptions {
 	/** Value for `pcp-action`. Defaults to `"MESSAGE"`. */
 	action?: string;
-	/** Value for `pcp-body-type` (`"text"` or `"binary"`). Defaults to `"text"`. */
-	bodyType?: string;
+	/**
+	 * Value for `pcp-body-type`. The PCP spec defines `"text"` and `"binary"`;
+	 * the union here keeps IDE autocomplete for those while leaving the type
+	 * open to non-standard values. Defaults to `"text"`.
+	 */
+	bodyType?: "text" | "binary" | (string & {});
 	/**
 	 * Additional application-defined fields. Names must be non-empty and must
-	 * not start with `pcp-`; `pcp-*` entries are silently dropped.
+	 * not start with `pcp-`; `pcp-*` entries are silently dropped to keep the
+	 * two reserved fields (`pcp-action`, `pcp-body-type`) under the dedicated
+	 * `action` / `bodyType` options exclusively.
 	 */
 	fields?: Record<string, string>;
 	/**
