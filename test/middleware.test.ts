@@ -192,6 +192,36 @@ describe("ws-mock middleware", () => {
 		ws.close();
 	});
 
+	it("PCP mode: encode errors raised from ctx.send are caught by the handler-invocation wrapper", async () => {
+		// `ctx.send({ fields: { "": "x" } })` triggers encode()'s empty-name
+		// throw. The middleware does not swallow it inside `send`; the throw
+		// propagates back through the `invoke` wrapper, which logs at error
+		// and keeps the connection open.
+		const args = buildFactoryArgs(
+			"test/fixtures/handlers/pcp-send-bad-field.ts",
+			"/ws/badfield",
+		);
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(
+			`ws://127.0.0.1:${serverHandle.port}/ws/badfield`,
+			"v10.pcp.sap.com",
+		);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "error" &&
+				String(e.args.join(" ")).includes("onConnect threw") &&
+				String(e.args.join(" ")).includes("non-empty"),
+		);
+		expect(ws.readyState).toBe(WebSocket.OPEN);
+
+		ws.close();
+	});
+
 	it("PCP mode: handlers can build custom PCP frames via encode + ctx.ws.send", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
