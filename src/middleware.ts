@@ -105,11 +105,6 @@ function resolveHandlerRoot(
  * Eagerly loads a handler module. Failures are captured so the route can
  * respond with a sensible close code at upgrade time instead of crashing
  * `ui5 serve`.
- *
- * Uses dynamic `import()` (not `require()`) because the package declares
- * `"type": "module"` and Node ≥ 22.18's native type stripping resolves `.ts`
- * specifiers through the ESM loader. CJS `require()` for `.ts` would need a
- * loader hook (e.g. `ts-node`), which the middleware deliberately avoids.
  */
 async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
 	const absolute = resolve(handlerRoot, route.handler);
