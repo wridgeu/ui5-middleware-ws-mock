@@ -43,11 +43,6 @@ const handler: WebSocketHandler = {
 		// `asserts` helper variant: same narrowing as `if/throw`, reusable.
 		assertPcp(ctx);
 		ctx.send({ action: "POST_ASSERT", body: "narrowed" });
-
-		// Inline-cast variant: documented in the README as the runtime-unsafe
-		// shortcut. Included here to confirm the cast itself typechecks.
-		const c = ctx as PcpWebSocketContext;
-		c.send({ action: "POST_CAST", body: "narrowed" });
 	},
 };
 
