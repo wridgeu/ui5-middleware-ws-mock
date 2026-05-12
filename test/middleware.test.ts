@@ -944,6 +944,42 @@ describe("ws-mock middleware", () => {
 		ws.close();
 	});
 
+	it("onError fires for transport-level ws 'error' events", async () => {
+		const args = buildFactoryArgs(
+			"test/fixtures/handlers/onerror-socket-error.ts",
+			"/ws/oesock",
+		);
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/oesock`);
+		// Swallow the client-side error that surfaces when the server closes the
+		// connection with 1002; an unhandled `'error'` would crash the test.
+		ws.on("error", () => {});
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+
+		// RFC 6455 §5.1: clients MUST mask every frame. Bypass ws's masking by
+		// writing raw bytes to the underlying TCP socket: FIN=1, opcode=text(1)
+		// (0x81), MASK=0, payload-len=2 (0x02), body=`hi` (0x68 0x69). The
+		// server's receiver detects the missing MASK bit and emits `'error'` on
+		// the server-side WebSocket, which our listener surfaces through
+		// `onError` before the server closes with 1002.
+		const unmaskedTextFrame = Buffer.from([0x81, 0x02, 0x68, 0x69]);
+		// ws exposes the underlying TCP socket as `_socket`; there is no public alternative.
+		// oxlint-disable-next-line no-underscore-dangle
+		const clientSocket = (ws as unknown as { _socket: import("node:net").Socket })._socket;
+		clientSocket.write(unmaskedTextFrame);
+
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "info" && String(e.args.join(" ")).includes("onError:socket"),
+		);
+		const sawSocketErrorLog = args.entries.some(
+			(e) => e.level === "error" && String(e.args.join(" ")).includes("socket error:"),
+		);
+		expect(sawSocketErrorLog).toBe(true);
+	});
+
 	it("onError fires when ctx.send's encode() throws (PCP empty field name)", async () => {
 		const args = buildFactoryArgs(
 			"test/fixtures/handlers/onerror-encode-throw.ts",
