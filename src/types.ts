@@ -170,6 +170,21 @@ export interface WebSocketHandler {
 	 * code, `reason` is the utf-8 reason string (empty when none was sent).
 	 */
 	onClose?: (ctx: WebSocketContext, code: number, reason: string) => void | Promise<void>;
+	/**
+	 * Called when the middleware catches an error from this connection:
+	 *
+	 *   - a sync throw or async rejection from `onConnect` / `onMessage` /
+	 *     `onClose`,
+	 *   - an `encode()` failure propagated through `ctx.send` (PCP mode),
+	 *   - a `'error'` event on the underlying `ws` socket (transport).
+	 *
+	 * The middleware always logs the error through `ctx.log.error` first;
+	 * `onError` is an additional notification, not a replacement for the log
+	 * line. The connection is not closed unless the handler does so
+	 * explicitly. Throws or rejections from `onError` itself are logged at
+	 * `error` and do not re-enter the hook.
+	 */
+	onError?: (ctx: WebSocketContext, err: unknown) => void | Promise<void>;
 }
 
 /** Shape of a single entry in the middleware's `configuration.routes` list. */
