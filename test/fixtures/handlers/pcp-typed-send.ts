@@ -1,13 +1,13 @@
 import type { WebSocketHandler } from "../../../src/types.js";
 
 /**
- * Spike fixture for the typed `ctx.send` overload.
+ * Fixture exercising the typed `ctx.send` overload end-to-end:
  *
  *   - String calls stay legal in both modes (mode-erased call sites compile).
- *   - PCP-only calls (custom action, body-type, fields) become legal once
+ *   - Custom PCP frames (action, body-type, fields) become legal once
  *     `ctx.mode === "pcp"` narrows the discriminated union.
- *   - The middleware calls `encode()` internally, so handlers no longer have
- *     to import it for the common cases.
+ *   - The middleware calls `encode()` internally, so the handler never
+ *     imports it.
  */
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {

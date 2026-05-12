@@ -22,7 +22,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 - Negotiates the PCP v1.0 subprotocol when the client offers it; otherwise runs in plain WebSocket mode. Handlers see `ctx.mode` and branch on it where needed.
 - Loads one handler module per route at startup (TypeScript or JavaScript).
 - Forwards every inbound frame to the handler's `onMessage`. In plain mode the handler receives the raw frame string; in PCP mode it receives a decoded `{ fields, body }` object with the wire bytes preserved verbatim.
-- Provides `ctx.send(message)` for outbound writes. Plain mode writes the string verbatim. PCP mode accepts either a string (wrapped in a default `pcp-action:MESSAGE` / `pcp-body-type:text` frame) or an `EncodeOptions` object that drives a custom action, body-type, or extra header fields — the middleware calls `encode()` internally. The TypeScript surface narrows on `ctx.mode` so the `EncodeOptions` overload is only offered to PCP-mode call sites. For anything the public encoder cannot express, fall back to `ctx.ws.send` with a pre-built wire string.
+- Provides `ctx.send(message)` for outbound writes. Plain mode writes the string verbatim. PCP mode accepts either a string (wrapped in a default `pcp-action:MESSAGE` / `pcp-body-type:text` frame) or an `EncodeOptions` object (the middleware calls `encode()` internally). The TypeScript surface narrows on `ctx.mode` so the `EncodeOptions` overload is only offered to PCP-mode call sites. For framings the public encoder does not cover, fall back to `ctx.ws.send` with a pre-built wire string.
 - Logs handler failures, malformed frames, and non-open-socket sends without crashing `ui5 serve` or the connection.
 
 ## What it does not do
@@ -215,7 +215,7 @@ All callbacks are optional. A handler that only implements `onMessage` is valid;
 
 ### `WebSocketContext`
 
-`WebSocketContext` is a discriminated union on `mode` (defined in [`src/types.ts`](src/types.ts)). Every callback receives one of the two members — `PlainWebSocketContext` or `PcpWebSocketContext`, both re-exported from the package root — and TypeScript narrows the union on `ctx.mode === "pcp"` / `"plain"`, which unlocks the appropriate `send` signature:
+`WebSocketContext` is a discriminated union on `mode` (defined in [`src/types.ts`](src/types.ts)). Every callback receives one of the two members (`PlainWebSocketContext` or `PcpWebSocketContext`, both re-exported from the package root). TypeScript narrows the union on `ctx.mode === "pcp"` / `"plain"`, which unlocks the appropriate `send` signature:
 
 | Field       | Type                                                                                    | Description                                                                                                                                                  |
 | ----------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -268,11 +268,13 @@ For framing the public encoder cannot express (alternate separator handling, raw
 
 ### Asserting a single mode
 
-When a route is single-mode by contract — a PCP-only endpoint where any plain client is a bug, say — narrowing on `ctx.mode` at every call site adds noise. Two patterns let you skip the per-call narrow. Both rely on the named branches of the discriminated union (`PlainWebSocketContext` / `PcpWebSocketContext`), which are re-exported from the package root alongside `WebSocketContext`.
+When a route is single-mode by contract (a PCP-only endpoint where any plain client is a bug, for instance), narrowing on `ctx.mode` at every call site adds noise. Two patterns let you skip the per-call narrow. Both rely on the named branches of the discriminated union (`PlainWebSocketContext` / `PcpWebSocketContext`), which are re-exported from the package root alongside `WebSocketContext`.
 
-**Early-return narrow (recommended).** A single guard at the top of the callback both fails loudly on a wrong assumption and narrows `ctx` for the rest of the function body:
+**Early-return narrow (recommended).** A single guard at the top of the callback fails loudly on a wrong assumption and narrows `ctx` for the rest of the function body:
 
 ```typescript
+import type { WebSocketHandler } from "ui5-middleware-ws-mock";
+
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
 		if (ctx.mode !== "pcp") throw new Error("route requires PCP subprotocol");
@@ -280,12 +282,18 @@ const handler: WebSocketHandler = {
 		ctx.send({ action: "HELLO", body: "" });
 	},
 };
+
+export default handler;
 ```
 
-If the same assumption recurs across handlers, factor it into a TypeScript `asserts` helper. The `asserts` predicate has the same narrowing effect as the inline `if/throw` but is reusable:
+If the same assumption recurs across handlers, factor it into a TypeScript `asserts` helper. The predicate has the same narrowing effect as the inline `if/throw` but is reusable:
 
 ```typescript
-import type { WebSocketContext, PcpWebSocketContext } from "ui5-middleware-ws-mock";
+import type {
+	PcpWebSocketContext,
+	WebSocketContext,
+	WebSocketHandler,
+} from "ui5-middleware-ws-mock";
 
 function assertPcp(ctx: WebSocketContext): asserts ctx is PcpWebSocketContext {
 	if (ctx.mode !== "pcp") throw new Error("expected PCP route");
@@ -297,12 +305,14 @@ const handler: WebSocketHandler = {
 		ctx.send({ action: "HELLO", body: "" });
 	},
 };
+
+export default handler;
 ```
 
-**Inline cast.** If you're willing to skip the runtime check, cast `ctx` directly. The cast has no runtime effect — it only changes what TypeScript sees:
+**Inline cast.** If you accept the runtime exposure described below, cast `ctx` directly. The cast has no runtime effect; it only changes what TypeScript sees:
 
 ```typescript
-import type { PcpWebSocketContext } from "ui5-middleware-ws-mock";
+import type { PcpWebSocketContext, WebSocketHandler } from "ui5-middleware-ws-mock";
 
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
@@ -310,9 +320,11 @@ const handler: WebSocketHandler = {
 		c.send({ action: "HELLO", body: "" });
 	},
 };
+
+export default handler;
 ```
 
-This is a load-bearing claim, not a verified fact. If the connection turns out plain at runtime — for example a client that omits the `v10.pcp.sap.com` subprotocol — `c.send({...})` passes the object through to the plain-mode `send` impl that expects a string; `ws.send` then rejects or stringifies it, and the client sees a malformed frame instead of a clean failure. The cast is acceptable when the deployment layer (ingress, gateway, client-side enforcement) prevents non-PCP clients from reaching the route; otherwise prefer the early-return form.
+This is a load-bearing claim, not a verified fact. If the connection turns out plain at runtime (a client that omits the `v10.pcp.sap.com` subprotocol, say), `c.send({...})` passes the object through to the plain-mode `send` impl that expects a string; `ws.send` then rejects or stringifies it, and the client sees a malformed frame instead of a clean failure. The cast is acceptable when the deployment layer (ingress, gateway, client-side enforcement) prevents non-PCP clients from reaching the route; otherwise prefer the early-return form.
 
 > [!NOTE]
 > You cannot narrow the parameter type directly: `onConnect: (ctx: PcpWebSocketContext) => …` fails to assign to `WebSocketHandler` because TypeScript checks function-property parameter types contravariantly under `strictFunctionTypes`. A handler that only accepts `PcpWebSocketContext` is structurally incompatible with the middleware's contract of calling your handler with whichever mode the connection negotiated. The cast and assertion forms above are the only ways to express "single-mode" inside the existing handler signature.

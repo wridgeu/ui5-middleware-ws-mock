@@ -52,21 +52,23 @@ export interface PlainWebSocketContext extends WebSocketContextBase {
  * fields. The middleware calls `encode()` internally, so handlers do not
  * need to import it for the common cases.
  *
- * For framing the public encoder cannot express (raw binary, alternate
- * separator handling, etc.) reach for `ctx.ws.send` with a pre-built wire
- * string.
+ * For framings the public encoder does not cover (a non-PCP wire format on
+ * the same socket, custom separator handling, etc.) reach for `ctx.ws.send`
+ * with a pre-built wire string.
  *
- * Non-open sockets and synchronous `ws.send` throws are logged and swallowed;
- * `send` never throws.
+ * Non-open sockets and synchronous `ws.send` throws are logged and swallowed.
+ * `encode()` throws on empty PCP field names; that throw propagates out of
+ * `send` and is caught by the handler-invocation wrapper (logged at `error`,
+ * connection stays open).
  */
 export interface PcpWebSocketContext extends WebSocketContextBase {
 	mode: "pcp";
 	/**
 	 * Send a PCP frame.
 	 *
-	 *   - `send("hello")` → `encode({ body: "hello" })` (default action /
-	 *     body-type, no extra fields). Matches the legacy string overload.
-	 *   - `send({ action, bodyType, fields, body })` → `encode(options)`
+	 *   - `send("hello")` is shorthand for `encode({ body: "hello" })` (default
+	 *     action / body-type, no extra fields).
+	 *   - `send({ action, bodyType, fields, body })` calls `encode(options)`
 	 *     with whatever subset of fields the caller supplied.
 	 */
 	send: (message: string | EncodeOptions) => void;

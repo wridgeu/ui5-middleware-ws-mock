@@ -33,18 +33,19 @@ const handler: WebSocketHandler = {
 	},
 
 	onMessage: (ctx) => {
-		// Early-return narrow (README "Asserting a single mode" — pattern 1).
-		// After the throw, ctx is narrowed to PcpWebSocketContext.
+		// Early-return narrow pattern: `if/throw` narrows `ctx` for the rest
+		// of the body.
 		if (ctx.mode !== "pcp") throw new Error("requires PCP");
 		ctx.send({ action: "POST_THROW", body: "narrowed" });
 	},
 
 	onClose: (ctx) => {
-		// `asserts` helper (README "Asserting a single mode" — pattern 1 variant).
+		// `asserts` helper variant: same narrowing as `if/throw`, reusable.
 		assertPcp(ctx);
 		ctx.send({ action: "POST_ASSERT", body: "narrowed" });
 
-		// Inline cast (README "Asserting a single mode" — pattern 2).
+		// Inline-cast variant: documented in the README as the runtime-unsafe
+		// shortcut. Included here to confirm the cast itself typechecks.
 		const c = ctx as PcpWebSocketContext;
 		c.send({ action: "POST_CAST", body: "narrowed" });
 	},

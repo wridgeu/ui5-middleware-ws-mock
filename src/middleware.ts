@@ -184,9 +184,10 @@ function createContext(
 	};
 
 	if (mode === "pcp") {
-		// `encode()` only throws on empty field names; the string-sugar path
-		// can't produce that. The options path can — but the throw belongs to
-		// the caller's mistake (an empty key in `fields`), so let it surface.
+		// `encode()` only throws on empty field names. The string-sugar path
+		// cannot produce that; the options path can, but the throw is the
+		// caller's mistake (an empty key in `fields`), so it surfaces to the
+		// handler-invocation wrapper instead of being swallowed here.
 		const send = (message: string | EncodeOptions): void => {
 			const options: EncodeOptions =
 				typeof message === "string" ? { body: message } : message;
