@@ -160,9 +160,9 @@ describe("ws-mock middleware", () => {
 	});
 
 	it("PCP mode: ctx.send accepts EncodeOptions and emits a custom frame end-to-end", async () => {
-		// Spike: discriminated-union ctx narrows `send` to `string | EncodeOptions`
-		// once `ctx.mode === "pcp"`, and the middleware encodes internally so
-		// handlers no longer have to import `encode`.
+		// Verifies the typed-send surface: `ctx.send` narrows to `string |
+		// EncodeOptions` once `ctx.mode === "pcp"`, and the middleware calls
+		// `encode()` internally so the handler never imports it.
 		const args = buildFactoryArgs("test/fixtures/handlers/pcp-typed-send.ts", "/ws/typed");
 		await wsMock(args);
 		fireHook(serverHandle.server);
