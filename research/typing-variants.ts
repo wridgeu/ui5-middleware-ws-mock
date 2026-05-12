@@ -1,4 +1,4 @@
-/* eslint-disable no-unused-vars, no-unused-expressions, @typescript-eslint/no-namespace, @typescript-eslint/no-unused-vars -- research scratch; namespaces and helper bindings exist to host independent variants, not to be consumed at runtime */
+/* oxlint-disable no-unused-vars, no-unused-expressions -- research scratch; namespaces and helper bindings exist to host independent variants, not to be consumed at runtime */
 
 /**
  * Research scratch: alternative typings for the mode-dependent `send` overload.
