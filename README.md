@@ -190,7 +190,7 @@ The middleware speaks WebSocket. When the connecting client offers the `v10.pcp.
 
 Either mode can carry any payload format (JSON objects, opaque text, base64-encoded bytes, line-delimited records, etc.). The middleware never JSON-parses the body, never wraps outbound payloads in an envelope, and never invents routing keys; whatever framing or encoding the peers agree on lives entirely in handler code.
 
-The PCP v1.0 codec is implemented in [`src/pcp.ts`](src/pcp.ts) and re-exported from the package root as `encode` / `decode` / `pcpEscape` / `pcpUnescape` / `SUBPROTOCOL`; the `ws` package itself has no PCP awareness.
+The PCP v1.0 codec is implemented in [`src/pcp.ts`](src/pcp.ts) and re-exported from the package root as `encode` / `decode` / `pcpEscape` / `pcpUnescape` / `SUBPROTOCOL`; the `ws` package itself has no PCP awareness. Handlers should prefer `ctx.send` (which calls `encode` internally) for outbound writes from inside a handler callback; the standalone `encode` / `decode` exports are intended for code that does not have a `WebSocketContext` to hand (fixtures, test harnesses, fan-out workers that hold only a raw `WebSocket`, etc.).
 
 ## Handler API
 

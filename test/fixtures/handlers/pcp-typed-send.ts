@@ -1,13 +1,11 @@
 import type { WebSocketHandler } from "../../../src/types.js";
 
 /**
- * Fixture exercising the typed `ctx.send` overload end-to-end:
+ * Fixture exercising `ctx.send` end-to-end in PCP mode:
  *
- *   - String calls stay legal in both modes (mode-erased call sites compile).
- *   - Custom PCP frames (action, body-type, fields) become legal once
- *     `ctx.mode === "pcp"` narrows the discriminated union.
- *   - The middleware calls `encode()` internally, so the handler never
- *     imports it.
+ *   - `ctx.send("HELLO")` writes a default-framed PCP message.
+ *   - `ctx.send({ action, fields, body })` writes a custom-action frame.
+ *   - Inbound `"PING"` triggers a `PONG` reply with an empty body.
  */
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
