@@ -1,5 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import type { WebSocket } from "ws";
+import type { EncodeOptions } from "./pcp.js";
 
 /**
  * Negotiated wire mode for a connection. `"pcp"` when the client offered
@@ -9,38 +10,17 @@ import type { WebSocket } from "ws";
 export type WebSocketMode = "pcp" | "plain";
 
 /**
- * Per-connection context handed to every handler callback.
- *
- * `mode` is snapshot at the WebSocket upgrade based on the subprotocol the
- * server and client negotiated. It does not change for the lifetime of the
- * connection. Handlers branch on it to read inbound messages and to choose
- * an outbound framing strategy.
+ * Fields shared by every per-connection context, regardless of negotiated
+ * mode. The mode-specific shape adds `mode` and a `send` whose accepted
+ * payload differs (see `PlainWebSocketContext` / `PcpWebSocketContext`).
  */
-export interface WebSocketContext {
+interface WebSocketContextBase {
 	/** Raw `ws` instance. Required for any framing the helper methods do not cover. */
 	ws: WebSocket;
 	/** The HTTP upgrade request. Useful for `url`, `headers`, and `socket.remoteAddress`. */
 	req: IncomingMessage;
-	/** `"pcp"` when the client offered `v10.pcp.sap.com`, `"plain"` otherwise. */
-	mode: WebSocketMode;
 	/** Scoped logger, prefixed with `[ws-mock:<mountPath>]`. */
 	log: WebSocketLog;
-	/**
-	 * Send a text message. The middleware does not interpret the bytes:
-	 *
-	 *   - plain mode: `message` is written through `ws.send` unchanged.
-	 *   - pcp mode:   `message` is wrapped in a default PCP frame
-	 *                 (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra
-	 *                 header fields) with `message` as the body.
-	 *
-	 * For PCP frames with a non-default `pcp-action`, `pcp-body-type` (e.g.
-	 * `binary`), or extra header fields, build the wire string with the
-	 * exported `encode()` and call `ctx.ws.send(...)` directly.
-	 *
-	 * Non-open sockets and synchronous `ws.send` throws are logged and
-	 * swallowed; callers never see a throw from this method.
-	 */
-	send: (message: string) => void;
 	/**
 	 * Close the connection with an optional code + reason. The default code
 	 * is 1000 (Normal Closure).
@@ -49,6 +29,59 @@ export interface WebSocketContext {
 	/** Hard-kill the underlying socket without a close handshake (client sees 1006). */
 	terminate: () => void;
 }
+
+/**
+ * Connection context when the client did not offer `v10.pcp.sap.com`. The
+ * middleware does not frame the wire: `ctx.send(message)` writes the string
+ * through `ws.send` verbatim.
+ *
+ * Non-open sockets and synchronous `ws.send` throws are logged and swallowed;
+ * `send` never throws.
+ */
+export interface PlainWebSocketContext extends WebSocketContextBase {
+	mode: "plain";
+	/** Write `message` to the wire unchanged. */
+	send: (message: string) => void;
+}
+
+/**
+ * Connection context when the subprotocol negotiated to PCP. `send` accepts
+ * either a string (treated as the body of a default
+ * `pcp-action:MESSAGE` / `pcp-body-type:text` frame) or a full
+ * `EncodeOptions` to drive a custom action, body-type, or extra header
+ * fields. The middleware calls `encode()` internally, so handlers do not
+ * need to import it for the common cases.
+ *
+ * For framing the public encoder cannot express (raw binary, alternate
+ * separator handling, etc.) reach for `ctx.ws.send` with a pre-built wire
+ * string.
+ *
+ * Non-open sockets and synchronous `ws.send` throws are logged and swallowed;
+ * `send` never throws.
+ */
+export interface PcpWebSocketContext extends WebSocketContextBase {
+	mode: "pcp";
+	/**
+	 * Send a PCP frame.
+	 *
+	 *   - `send("hello")` → `encode({ body: "hello" })` (default action /
+	 *     body-type, no extra fields). Matches the legacy string overload.
+	 *   - `send({ action, bodyType, fields, body })` → `encode(options)`
+	 *     with whatever subset of fields the caller supplied.
+	 */
+	send: (message: string | EncodeOptions) => void;
+}
+
+/**
+ * Per-connection context handed to every handler callback. Discriminated on
+ * `mode`: narrow with `if (ctx.mode === "pcp") { ... }` to unlock the
+ * `EncodeOptions` overload of `send`.
+ *
+ * `mode` is snapshot at the WebSocket upgrade based on the subprotocol the
+ * server and client negotiated. It does not change for the lifetime of the
+ * connection.
+ */
+export type WebSocketContext = PlainWebSocketContext | PcpWebSocketContext;
 
 /**
  * Scoped logger handed to every handler callback through `ctx.log`. Each call

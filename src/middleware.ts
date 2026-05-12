@@ -39,7 +39,7 @@ import type {
 	WebSocketMode,
 	WebSocketRoute,
 } from "./types.js";
-import { decode, encode, SUBPROTOCOL } from "./pcp.js";
+import { decode, encode, SUBPROTOCOL, type EncodeOptions } from "./pcp.js";
 
 interface LoadedRoute {
 	route: WebSocketRoute;
@@ -155,18 +155,11 @@ function createContext(
 		error: (...a: unknown[]) => baseLog.error(prefix, ...a),
 	};
 
-	const send = (message: string): void => {
+	const writeRaw = (wire: string): void => {
 		if (ws.readyState !== ws.OPEN) {
 			log.warn(`send on non-open socket (state=${ws.readyState})`);
 			return;
 		}
-		// In PCP mode the helper wraps `message` in a default frame
-		// (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra fields).
-		// `encode()` only throws on empty field names, which this call site
-		// cannot produce, so the call is unguarded. Custom PCP framing
-		// (other actions, binary body-type, additional header fields) is
-		// the handler's job via `encode()` and `ctx.ws.send`.
-		const wire = mode === "pcp" ? encode({ body: message }) : message;
 		try {
 			ws.send(wire);
 		} catch (err) {
@@ -190,6 +183,19 @@ function createContext(
 		}
 	};
 
+	if (mode === "pcp") {
+		// `encode()` only throws on empty field names; the string-sugar path
+		// can't produce that. The options path can — but the throw belongs to
+		// the caller's mistake (an empty key in `fields`), so let it surface.
+		const send = (message: string | EncodeOptions): void => {
+			const options: EncodeOptions =
+				typeof message === "string" ? { body: message } : message;
+			writeRaw(encode(options));
+		};
+		return { ws, req, mode, log, send, close, terminate };
+	}
+
+	const send = (message: string): void => writeRaw(message);
 	return { ws, req, mode, log, send, close, terminate };
 }
 

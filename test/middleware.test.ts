@@ -159,6 +159,39 @@ describe("ws-mock middleware", () => {
 		ws.close();
 	});
 
+	it("PCP mode: ctx.send accepts EncodeOptions and emits a custom frame end-to-end", async () => {
+		// Spike: discriminated-union ctx narrows `send` to `string | EncodeOptions`
+		// once `ctx.mode === "pcp"`, and the middleware encodes internally so
+		// handlers no longer have to import `encode`.
+		const args = buildFactoryArgs("test/fixtures/handlers/pcp-typed-send.ts", "/ws/typed");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/typed`, "v10.pcp.sap.com");
+		const expectTwo = waitForMessages(ws, 2);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+
+		const [helloRaw, welcomeRaw] = await expectTwo;
+		const hello = decode(helloRaw!);
+		expect(hello.pcpFields["pcp-action"]).toBe("MESSAGE");
+		expect(hello.body).toBe("HELLO");
+
+		const welcome = decode(welcomeRaw!);
+		expect(welcome.pcpFields["pcp-action"]).toBe("WELCOME");
+		expect(welcome.pcpFields["pcp-body-type"]).toBe("text");
+		expect(welcome.pcpFields["sessionId"]).toBe("abc-123");
+		expect(welcome.body).toBe("hello, pcp");
+
+		const pong = waitForMessages(ws, 1);
+		ws.send(encode({ body: "PING" }));
+		const [pongRaw] = await pong;
+		const pongFrame = decode(pongRaw!);
+		expect(pongFrame.pcpFields["pcp-action"]).toBe("PONG");
+		expect(pongFrame.body).toBe("");
+
+		ws.close();
+	});
+
 	it("PCP mode: handlers can build custom PCP frames via encode + ctx.ws.send", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);

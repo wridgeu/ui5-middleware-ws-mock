@@ -22,7 +22,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 - Negotiates the PCP v1.0 subprotocol when the client offers it; otherwise runs in plain WebSocket mode. Handlers see `ctx.mode` and branch on it where needed.
 - Loads one handler module per route at startup (TypeScript or JavaScript).
 - Forwards every inbound frame to the handler's `onMessage`. In plain mode the handler receives the raw frame string; in PCP mode it receives a decoded `{ fields, body }` object with the wire bytes preserved verbatim.
-- Provides `ctx.send(message)` for the common case of writing a string. In PCP mode the helper wraps the string in a default frame (`pcp-action:MESSAGE`, `pcp-body-type:text`); for any other PCP shape the handler builds the wire string with the exported `encode()` and calls `ctx.ws.send` directly.
+- Provides `ctx.send(message)` for outbound writes. Plain mode writes the string verbatim. PCP mode accepts either a string (wrapped in a default `pcp-action:MESSAGE` / `pcp-body-type:text` frame) or an `EncodeOptions` object that drives a custom action, body-type, or extra header fields — the middleware calls `encode()` internally. The TypeScript surface narrows on `ctx.mode` so the `EncodeOptions` overload is only offered to PCP-mode call sites. For anything the public encoder cannot express, fall back to `ctx.ws.send` with a pre-built wire string.
 - Logs handler failures, malformed frames, and non-open-socket sends without crashing `ui5 serve` or the connection.
 
 ## What it does not do
@@ -215,53 +215,56 @@ All callbacks are optional. A handler that only implements `onMessage` is valid;
 
 ### `WebSocketContext`
 
-Every callback receives a `WebSocketContext` (defined in [`src/types.ts`](src/types.ts)):
+`WebSocketContext` is a discriminated union on `mode` (defined in [`src/types.ts`](src/types.ts)). Every callback receives one of the two members; TypeScript narrows the union on `ctx.mode === "pcp"` / `"plain"`, which unlocks the appropriate `send` signature:
 
-| Field       | Type                        | Description                                                                                                                                                                         |
-| ----------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ws`        | `WebSocket`                 | Raw `ws` instance. Required for any framing the helper methods do not cover (custom PCP actions, binary body-type, additional header fields).                                       |
-| `req`       | `http.IncomingMessage`      | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                                                      |
-| `mode`      | `WebSocketMode`             | `"pcp" \| "plain"`. Negotiated at the handshake; fixed for the lifetime of the connection. Handlers branch on this to interpret `message` and to pick an outbound framing strategy. |
-| `log`       | `WebSocketLog`              | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.                               |
-| `send`      | `(message: string) => void` | Send a text message. Plain mode writes the bytes through `ws.send` unchanged; PCP mode wraps them in a default frame. See below.                                                    |
-| `close`     | `(code?, reason?) => void`  | Close the connection with optional code (default 1000) and reason.                                                                                                                  |
-| `terminate` | `() => void`                | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                                                      |
+| Field       | Type                                                                                    | Description                                                                                                                                                  |
+| ----------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ws`        | `WebSocket`                                                                             | Raw `ws` instance. Required for any framing the helper methods do not cover.                                                                                 |
+| `req`       | `http.IncomingMessage`                                                                  | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                               |
+| `mode`      | `"pcp" \| "plain"`                                                                      | Negotiated at the handshake; fixed for the lifetime of the connection. Discriminant for the union; narrow on it to interpret `message` and choose `send`.    |
+| `log`       | `WebSocketLog`                                                                          | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.        |
+| `send`      | plain: `(message: string) => void`<br>pcp: `(message: string \| EncodeOptions) => void` | Send a frame. Plain mode writes the bytes through `ws.send` unchanged. PCP mode accepts a string (wrapped in a default frame) or `EncodeOptions`. See below. |
+| `close`     | `(code?, reason?) => void`                                                              | Close the connection with optional code (default 1000) and reason.                                                                                           |
+| `terminate` | `() => void`                                                                            | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                               |
 
-Consumers can filter by the `[ws-mock:<mountPath>]` prefix or by log message content.
+Calling `ctx.send("text")` is legal in either branch because `string` is in both signatures, so call sites that do not need PCP-specific framing do not need to narrow first. Calling `ctx.send({ action: "...", body: "..." })` requires the PCP narrow.
+
+Consumers can filter logs by the `[ws-mock:<mountPath>]` prefix or by log message content.
 
 ### `ctx.send(message)`
 
+The string overload behaves the same way in both modes; the `EncodeOptions` overload is PCP-only.
+
 ```typescript
 ctx.send("HELLO");
+
+if (ctx.mode === "pcp") {
+	ctx.send({
+		action: "EVENT",
+		bodyType: "text",
+		fields: { correlationId: "abc" },
+		body: "payload",
+	});
+}
 ```
 
 The middleware does not interpret the bytes:
 
 - **Plain mode.** `message` is written through `ws.send` unchanged.
-- **PCP mode.** `message` is wrapped in a default PCP frame (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra header fields) with `message` as the body.
+- **PCP mode, string.** `message` is wrapped in a default PCP frame (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra header fields) with `message` as the body.
+- **PCP mode, `EncodeOptions`.** The middleware calls `encode(message)` internally and writes the resulting wire string. `EncodeOptions` is re-exported from the package root.
 
 Non-open sockets and synchronous `ws.send` throws are logged and swallowed; callers never observe a throw.
 
-For PCP frames with a non-default `pcp-action`, a binary body-type, or extra header fields, build the wire string with the exported `encode()` and call `ctx.ws.send` directly:
+For binary payloads, base64-encode the bytes and pass `bodyType: "binary"`:
 
 ```typescript
-import { encode } from "ui5-middleware-ws-mock";
-
-ctx.ws.send(
-	encode({
-		action: "EVENT",
-		bodyType: "text",
-		fields: { correlationId: "abc" },
-		body: "payload",
-	}),
-);
+if (ctx.mode === "pcp") {
+	ctx.send({ bodyType: "binary", body: someBuffer.toString("base64") });
+}
 ```
 
-For binary payloads, base64-encode the bytes and set `bodyType: "binary"`:
-
-```typescript
-ctx.ws.send(encode({ bodyType: "binary", body: someBuffer.toString("base64") }));
-```
+For framing the public encoder cannot express (alternate separator handling, raw non-PCP wire formats, etc.), fall back to `ctx.ws.send` with a pre-built wire string. `encode` is re-exported from the package root for that purpose.
 
 ### Inbound `message`
 
@@ -281,7 +284,6 @@ Custom logic lives entirely inside the callbacks the handler provides.
 The middleware does not ship action routing. If you want a `name → callback` map, build it in two lines on top of `onMessage`:
 
 ```typescript
-import { encode } from "ui5-middleware-ws-mock";
 import type { WebSocketHandler, WebSocketContext } from "ui5-middleware-ws-mock";
 
 type Action = (ctx: WebSocketContext, body: string) => void;
@@ -293,7 +295,7 @@ const actions: Record<string, Action> = {
 
 function reply(ctx: WebSocketContext, action: string, body: string): void {
 	if (ctx.mode === "pcp") {
-		ctx.ws.send(encode({ fields: { action }, body }));
+		ctx.send({ fields: { action }, body });
 	} else {
 		ctx.send(`${action}:${body}`); // pick whichever plain-mode framing your client speaks
 	}
@@ -422,7 +424,7 @@ Every failure site is caught and logged through the route-scoped logger (`[ws-mo
 | Dynamic `import(handler)` failure at startup | logged at `error`; the route accepts the upgrade then closes with code 1011 (Internal Server Error).                                                                                                                                                  |
 | Unparseable upgrade URL                      | `try { new URL(req.url, ...) } catch` bails without claiming the upgrade so other listeners get a shot; log at `verbose`.                                                                                                                             |
 
-The default `ctx.send` path does not wrap `encode()` in a try/catch: the only error condition (empty field name) is unreachable from this call site. Handlers that build custom PCP frames via the exported `encode()` are responsible for handling that error themselves if they pass user-controlled field names.
+`ctx.send` does not wrap `encode()` in a try/catch. The string-sugar path cannot trigger `encode`'s only error condition (empty field name). The `EncodeOptions` path can, but the throw belongs to the caller's mistake (an empty key in `fields`); handlers that pass user-controlled field names are responsible for guarding against it.
 
 > [!NOTE]
 > **Restart the server before debugging.** Handler modules are imported once at startup and cached for the process lifetime; symptoms such as a route that 404s after a `ui5.yaml` edit, or a handler change that does not appear to take effect, are typically resolved by stopping `ui5 serve` and starting it again.
