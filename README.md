@@ -31,8 +31,23 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 - Does not support multiple handler modules per route. Each route resolves to exactly one handler file. Composition belongs inside the handler module.
 - Does not support dynamic or parametrized mount paths. `mountPath` is matched against the request pathname literally. UI5-style route patterns with optional or mandatory parameters (`{param}`, `:optional?`, etc.) are not supported. Per-resource routing should be derived from `req.url` inside the handler.
 - Does not persist state across server restarts.
-- Does not impose a payload contract. Named-message dispatch ("action routing"), JSON envelopes, and any other application-level convention are the handler's responsibility — the middleware ships nothing of the kind.
+- Does not impose a payload contract. Named-message dispatch ("action routing"), JSON envelopes, and any other application-level convention are the handler's responsibility; the middleware ships nothing of the kind.
 - Does not proxy to a real backend. For proxying, use [`ui5-middleware-simpleproxy`](https://www.npmjs.com/package/ui5-middleware-simpleproxy) or `fiori-tools-proxy`.
+
+## Prerequisites
+
+- **Node.js** ≥ 22.18 (declared in `engines`; required for the native TypeScript type stripping the handler loader relies on when handlers are authored in TS).
+- **`@ui5/cli`** ≥ 4.0.0 (this middleware declares `specVersion: "4.0"`; older CLI versions reject the extension).
+- A UI5 project of `kind: project`, `type: application` / `library` / `themeLibrary`. `Module`-type projects need `configuration.rootPath` because they have no single source path.
+- TypeScript is not required to use the middleware; handlers may be plain `.js` files. If you write handlers in TypeScript, Node ≥ 22.18 runs them directly via native type stripping; no `ts-node` step is needed.
+
+## Version compatibility
+
+| `ui5-middleware-ws-mock` | UI5 Tooling specVersion | `@ui5/cli` | Node      | TypeScript (optional) |
+| ------------------------ | ----------------------- | ---------- | --------- | --------------------- |
+| `0.x`                    | `4.0`                   | `≥ 4.0.0`  | `≥ 22.18` | `~ 6.0`               |
+
+Pre-1.0 the public types and the middleware configuration shape may change in minor releases. Note that for `0.x` versions npm semver treats the minor as the major: `^0.3.0` and `~0.3.0` resolve to the same range (`>=0.3.0 <0.4.0`), so either form pins to the current minor.
 
 ## Quick start
 
@@ -89,35 +104,18 @@ The transport is plain WebSocket. When the client offers it, the middleware also
     The first line is logged at `verbose` and shows the effective root path; the per-route line also includes the absolute resolved path, so a handler load failure points directly at the file the middleware tried to import.
 
 > [!TIP]
-> **Restart `ui5 serve` after editing configuration or handlers.** Livereload covers `webapp/`-side code only. Changes to `ui5.yaml` (new routes, renamed mount paths) and changes to handler modules are picked up at the next server boot. To automate this, run `ui5 serve` under a process supervisor such as `tsx watch` or `nodemon --watch <handlers-dir>`.
-
-## TypeScript: importing types from a CommonJS-context project
-
-This package is published ESM-only. The runtime declares `"type": "module"` and `dist/index.d.ts` is exposed under the `types` and `default` export conditions only, with no `require` condition and no `.d.cts` shadow. When the importing file is resolved in a CommonJS context (typical with `"module": "commonjs"` or `"node10"`, and with `"node16"`/`"nodenext"` when the importing file's nearest `package.json` declares `"type": "commonjs"` or omits it), `tsc` cannot pick up an ESM-only type declaration via a plain `import type`. The standard workaround is the `resolution-mode` import attribute:
-
-```typescript
-import type { PcpFrame, WebSocketHandler } from "ui5-middleware-ws-mock" with {
-	"resolution-mode": "import",
-};
-```
-
-The attribute tells `tsc` to resolve the specifier as if the importing file were ESM. Two settings avoid needing it altogether:
-
-- **Make the consuming TS context ESM.** Set `"type": "module"` in the consuming project's `package.json` and `"module": "nodenext"` plus `"moduleResolution": "nodenext"` in its `tsconfig.json`.
-- **Use `"moduleResolution": "bundler"`** when a bundler (Vite, esbuild, etc.) handles module loading. Bundler-mode resolution does not enforce the ESM/CJS split.
-
-This package does not ship a `.d.cts` shadow. The JavaScript ecosystem is moving to ESM, and supporting a CJS resolution context is not a goal here.
+> Handlers and `ui5.yaml` edits require a `ui5 serve` restart; livereload only covers `webapp/`-side code. See [Limitations](#limitations) for the supervisor pattern that automates it.
 
 ## Configuration
 
 The `configuration` block under the `customMiddleware` entry accepts:
 
-| Key                  | Type               | Required | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| -------------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rootPath`           | `string`           | no       | Override the root directory that `routes[].handler` paths resolve against. Resolved relative to the project root (the directory containing `ui5.yaml`); absolute paths are honored as-is. Defaults to the UI5 project's source path — `webapp/` for Application projects, `src/` for Library/ThemeLibrary projects (honoring any overrides under `resources.configuration.paths`). Module-type projects have no single source path, so `rootPath` is required there. |
-| `routes`             | `WebSocketRoute[]` | yes      | One entry per mount path. Each entry declares a path and the file that provides the handler module.                                                                                                                                                                                                                                                                                                                                                                  |
-| `routes[].mountPath` | `string`           | yes      | Path such as `/ws/foo`. Matched against the upgrade request pathname literally; no parameter patterns. Clients connect to `ws://<host>:<port><mountPath>`.                                                                                                                                                                                                                                                                                                           |
-| `routes[].handler`   | `string`           | yes      | Path to the handler module, resolved against the effective root (see `rootPath` above). Absolute paths are honored as-is. Exactly one handler per route.                                                                                                                                                                                                                                                                                                             |
+| Key                  | Type               | Required | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------- | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rootPath`           | `string`           | no       | Override the root directory that `routes[].handler` paths resolve against. Resolved relative to the project root (the directory containing `ui5.yaml`); absolute paths are honored as-is. Defaults to the UI5 project's source path: `webapp/` for Application projects, `src/` for Library/ThemeLibrary projects (honoring any overrides under `resources.configuration.paths`). Module-type projects have no single source path, so `rootPath` is required there. |
+| `routes`             | `WebSocketRoute[]` | yes      | One entry per mount path. Each entry declares a path and the file that provides the handler module.                                                                                                                                                                                                                                                                                                                                                                 |
+| `routes[].mountPath` | `string`           | yes      | Path such as `/ws/foo`. Matched against the upgrade request pathname literally; no parameter patterns. Clients connect to `ws://<host>:<port><mountPath>`.                                                                                                                                                                                                                                                                                                          |
+| `routes[].handler`   | `string`           | yes      | Path to the handler module, resolved against the effective root (see `rootPath` above). Absolute paths are honored as-is. Exactly one handler per route.                                                                                                                                                                                                                                                                                                            |
 
 ### `rootPath` resolution matrix
 
@@ -192,6 +190,38 @@ Either mode can carry any payload format (JSON objects, opaque text, base64-enco
 
 The PCP v1.0 codec is implemented in [`src/pcp.ts`](src/pcp.ts) and re-exported from the package root as `encode` / `decode` / `pcpEscape` / `pcpUnescape` / `SUBPROTOCOL`; the `ws` package itself has no PCP awareness. Handlers should prefer `ctx.send` (which calls `encode` internally) for outbound writes from inside a handler callback; the standalone `encode` / `decode` exports are intended for code that does not have a `WebSocketContext` to hand (fixtures, test harnesses, fan-out workers that hold only a raw `WebSocket`, etc.).
 
+### Negotiation
+
+Negotiation is per connection, not per route. The same `mountPath` can serve a PCP client and a plain client at the same time; each connection negotiates independently at its own handshake, and the handler reads the outcome through that connection's `ctx.mode`.
+
+The middleware constructs its `WebSocketServer` with:
+
+```typescript
+handleProtocols: (protocols) => (protocols.has("v10.pcp.sap.com") ? "v10.pcp.sap.com" : false);
+```
+
+Clients that offer `v10.pcp.sap.com` get it echoed back and run in PCP mode; encoding and decoding go through the codec in [`src/pcp.ts`](src/pcp.ts). Clients that offer no subprotocol (plain `WebSocket`) get no subprotocol back and run in plain mode. Clients that offer only some other subprotocol fail their own handshake per RFC 6455 §4.2.2, because no echo is returned for unrecognized subprotocols.
+
+After the handshake, `ws.protocol` is either `"v10.pcp.sap.com"` or `""`, and the middleware snapshots that value into `ctx.mode`. The mode is fixed for the lifetime of that connection. If a route should only ever serve one mode, enforce it with a guard inside the handler. See [Asserting a single mode](#asserting-a-single-mode).
+
+### Backpressure and payload limits
+
+The middleware does not throttle or buffer-cap. Two `ws`-level defaults are worth knowing about when a handler pushes high-frequency frames or accepts large inbound payloads:
+
+- **Backpressure.** A slow or stalled peer cannot acknowledge frames as fast as the handler produces them; the unsent bytes accumulate in `ws.bufferedAmount`. Handlers that periodically push (`setInterval`, change-detection loops, fan-out subscriber sets) should sample `ctx.ws.bufferedAmount` and skip a tick when it grows past a threshold:
+
+    ```typescript
+    onConnect: (ctx) => {
+    	const timer = setInterval(() => {
+    		if (ctx.ws.bufferedAmount > 1_000_000) return; // ~1 MiB unsent
+    		ctx.send(`tick at ${Date.now()}`);
+    	}, 100);
+    	ctx.ws.on("close", () => clearInterval(timer));
+    };
+    ```
+
+- **`maxPayload` default.** Inbound frames larger than `ws`'s default `maxPayload` (100 MiB) are rejected at the WebSocket layer before reaching `onMessage`; the connection is closed with code 1009 (`Message Too Big`). The middleware does not expose a knob to override this. For mock scenarios this ceiling is almost always far above realistic test payloads.
+
 ## Handler API
 
 A handler module default-exports an object implementing `WebSocketHandler` (defined in [`src/types.ts`](src/types.ts)):
@@ -201,6 +231,7 @@ export interface WebSocketHandler {
 	onConnect?: (ctx: WebSocketContext) => void | Promise<void>;
 	onMessage?: (ctx: WebSocketContext, message: InboundMessage) => void | Promise<void>;
 	onClose?: (ctx: WebSocketContext, code: number, reason: string) => void | Promise<void>;
+	onError?: (ctx: WebSocketContext, err: unknown) => void | Promise<void>;
 }
 
 export type InboundMessage = string | PcpFrame;
@@ -212,6 +243,8 @@ export interface PcpFrame {
 ```
 
 All callbacks are optional. A handler that only implements `onMessage` is valid; so is a handler that only implements `onConnect` (e.g. a periodic-push fixture that never reads inbound traffic). Frames that arrive when no `onMessage` is defined are dropped with a `verbose` log. Any callback may be `async`; the middleware awaits returned promises and logs rejections through `ctx.log.error` without closing the connection.
+
+`onError` fires whenever the middleware catches an error from this connection: a sync throw or async rejection from any other callback, an `encode()` failure raised inside `ctx.send` (PCP mode), or a `'error'` event on the underlying `ws` socket. The error is always logged first; the hook is an additional notification, not a replacement. A throw from `onError` itself is logged once and does not re-enter the hook.
 
 ### `WebSocketContext`
 
@@ -268,7 +301,7 @@ For framing the public encoder cannot express (alternate separator handling, raw
 
 ### Asserting a single mode
 
-When a route is single-mode by contract (a PCP-only endpoint where any plain client is a bug, for instance), narrowing on `ctx.mode` at every call site adds noise. Two patterns let you skip the per-call narrow. Both rely on the named branches of the discriminated union (`PlainWebSocketContext` / `PcpWebSocketContext`), which are re-exported from the package root alongside `WebSocketContext`.
+When a route is single-mode by contract (a PCP-only endpoint where any plain client is a bug, for instance), narrowing on `ctx.mode` at every call site adds noise. Two type-safe patterns let you skip the per-call narrow. Both rely on the named branches of the discriminated union (`PlainWebSocketContext` / `PcpWebSocketContext`), which are re-exported from the package root alongside `WebSocketContext`.
 
 **Early-return narrow (recommended).** A single guard at the top of the callback fails loudly on a wrong assumption and narrows `ctx` for the rest of the function body:
 
@@ -309,25 +342,7 @@ const handler: WebSocketHandler = {
 export default handler;
 ```
 
-**Inline cast.** If you accept the runtime exposure described below, cast `ctx` directly. The cast has no runtime effect; it only changes what TypeScript sees:
-
-```typescript
-import type { PcpWebSocketContext, WebSocketHandler } from "ui5-middleware-ws-mock";
-
-const handler: WebSocketHandler = {
-	onConnect: (ctx) => {
-		const c = ctx as PcpWebSocketContext;
-		c.send({ action: "HELLO", body: "" });
-	},
-};
-
-export default handler;
-```
-
-This is a load-bearing claim, not a verified fact. If the connection turns out plain at runtime (a client that omits the `v10.pcp.sap.com` subprotocol, say), `c.send({...})` passes the object through to the plain-mode `send` impl that expects a string; `ws.send` then rejects or stringifies it, and the client sees a malformed frame instead of a clean failure. The cast is acceptable when the deployment layer (ingress, gateway, client-side enforcement) prevents non-PCP clients from reaching the route; otherwise prefer the early-return form.
-
-> [!NOTE]
-> You cannot narrow the parameter type directly: `onConnect: (ctx: PcpWebSocketContext) => …` fails to assign to `WebSocketHandler` because TypeScript checks function-property parameter types contravariantly under `strictFunctionTypes`. A handler that only accepts `PcpWebSocketContext` is structurally incompatible with the middleware's contract of calling your handler with whichever mode the connection negotiated. The cast and assertion forms above are the only ways to express "single-mode" inside the existing handler signature.
+Direct parameter narrowing (`onConnect: (ctx: PcpWebSocketContext) => …`) is rejected by TypeScript; see [Troubleshooting](#troubleshooting) for the exact error and why. A `ctx as PcpWebSocketContext` cast is not recommended either: it strips the runtime check the early-return pattern gives you and turns a misnegotiated connection into silently-dropped frames.
 
 ### Inbound `message`
 
@@ -460,18 +475,6 @@ const handler: WebSocketHandler = {
 };
 ```
 
-## PCP negotiation
-
-Negotiation runs once per connection at the handshake. The middleware constructs its `WebSocketServer` with:
-
-```typescript
-handleProtocols: (protocols) => (protocols.has("v10.pcp.sap.com") ? "v10.pcp.sap.com" : false);
-```
-
-Clients that offer `v10.pcp.sap.com` receive it back, pinning the connection into PCP mode; encoding and decoding then go through the codec in [`src/pcp.ts`](src/pcp.ts). Clients that offer no subprotocol (plain `WebSocket`) receive no subprotocol back. Clients that offer something else fail their own handshake per RFC 6455 §4.2.2, because no echo is returned for unrecognized subprotocols.
-
-After the handshake, `ws.protocol` is either `"v10.pcp.sap.com"` or `""`, and the middleware snapshots that value into `ctx.mode`. The mode is fixed for the lifetime of the connection.
-
 ## Error handling
 
 Every failure site is caught and logged through the route-scoped logger (`[ws-mock:<mountPath>]`). The connection stays open unless the handler explicitly closes it.
@@ -487,10 +490,7 @@ Every failure site is caught and logged through the route-scoped logger (`[ws-mo
 | Dynamic `import(handler)` failure at startup | logged at `error`; the route accepts the upgrade then closes with code 1011 (Internal Server Error).                                                                                                                                                  |
 | Unparseable upgrade URL                      | `try { new URL(req.url, ...) } catch` bails without claiming the upgrade so other listeners get a shot; log at `verbose`.                                                                                                                             |
 
-`ctx.send` does not wrap `encode()` in a try/catch. The string-sugar path cannot trigger `encode`'s only error condition (empty field name). The `EncodeOptions` path can, but the throw belongs to the caller's mistake (an empty key in `fields`); handlers that pass user-controlled field names are responsible for guarding against it.
-
-> [!NOTE]
-> **Restart the server before debugging.** Handler modules are imported once at startup and cached for the process lifetime; symptoms such as a route that 404s after a `ui5.yaml` edit, or a handler change that does not appear to take effect, are typically resolved by stopping `ui5 serve` and starting it again.
+`ctx.send` does not wrap `encode()` in a try/catch. The string overload cannot trigger `encode`'s only error condition (empty field name). The `EncodeOptions` overload can, but the throw belongs to the caller's mistake (an empty key in `fields`); handlers that pass user-controlled field names are responsible for guarding against it.
 
 ## How it works under the hood
 
@@ -559,8 +559,29 @@ The cost is the coupling to the hook trick. A future UI5 tooling major bump that
 - **Handler modules are imported once at server start.** Each route's handler is loaded via dynamic `import()` during `ui5 serve` startup; the module is then cached in Node's ESM loader for the process lifetime. Picking up handler edits requires a `ui5 serve` restart. A process supervisor such as `tsx watch` or `nodemon --watch <handlers-dir>` automates this. Adding the handler directory to `ui5-middleware-livereload`'s `watchPath` reloads the browser when files change but does not restart the server.
 - **One handler module per route.** No chaining or composition is performed by the middleware. Layered behavior should be composed inside the handler module.
 - **No dynamic / parametrized mount paths.** `mountPath` is matched literally against the incoming request pathname. UI5-style route patterns with optional or mandatory parameters are not supported. Per-resource routing should be derived from `req.url` (query string or path segments) inside the handler.
-- **`ts-node` interference.** `sap-fe-mockserver` registers a global `ts-node` hook that hijacks `require()` for `.ts` files. Handler modules are loaded via dynamic `import()` to sidestep the hook.
 - **Requires specVersion 3.0+** on the middleware extension to use `middlewareUtil.getProject().getRootPath()` (and `getSourcePath()`) for resolving handler paths. This middleware declares `specVersion: "4.0"`.
+
+## Troubleshooting
+
+**A handler edit didn't take effect.** Handler modules are imported once at server start and cached for the process lifetime. Stop `ui5 serve` and start it again, or run it under a supervisor (`tsx watch`, `nodemon --watch <handlers-dir>`) that restarts the whole process on changes. See [Limitations](#limitations).
+
+**The client disconnects with code 1011.** The handler module failed to load (syntax error, missing default export, import that threw). The middleware accepts the upgrade then closes with `1011 Internal Server Error`; the failure is also logged at server start with the absolute file path the middleware tried to import. Fix the module and restart the server.
+
+**The client disconnects with code 1006.** This is the "no close frame received" code, emitted by the client when the TCP connection drops without a clean WebSocket close. Most often: the server process exited (handler `throw` that wasn't caught; almost everything inside the middleware is caught, but raw `ctx.ws.on(...)` listeners on the underlying socket are the handler's own to guard), or `ctx.terminate()` was called.
+
+**The client offers a subprotocol and the handshake fails.** Only `v10.pcp.sap.com` is recognized. Any other offered subprotocol receives no echo from the server; per RFC 6455 §4.2.2 the client fails its own handshake. Plain `WebSocket` clients that offer no subprotocol succeed and run in plain mode.
+
+**Custom `pcp-XXX` header disappears in PCP mode.** `pcp-*` is a reserved prefix in the PCP spec. The encoder silently drops `pcp-*` keys from `EncodeOptions.fields`; the two reserved fields go through the dedicated `action` and `bodyType` options instead. Application-defined header names should not start with `pcp-`.
+
+**`Types of parameters 'ctx' and 'ctx' are incompatible.`** A handler typed as `onConnect: (ctx: PcpWebSocketContext) => …` will not assign to `WebSocketHandler`. TypeScript checks function-property parameters contravariantly under `strictFunctionTypes`, so a callback that only accepts `PcpWebSocketContext` is structurally incompatible with the middleware's contract of invoking your handler with whichever mode the connection negotiated. Use the early-return narrow or `asserts` helper documented under [Asserting a single mode](#asserting-a-single-mode).
+
+**TypeScript can't find this package's types from my consuming project.** The package is published ESM-only: `dist/index.d.ts` is exposed under the `types`/`default` export conditions only, with no `require` condition and no `.d.cts` shadow. In a CommonJS resolution context (`"module": "commonjs"`/`"node10"`, or `"node16"`/`"nodenext"` with `"type": "commonjs"` or none in the importer's nearest `package.json`), a plain `import type` does not resolve. Three workarounds:
+
+- **Per-import override.** `import type { … } from "ui5-middleware-ws-mock" with { "resolution-mode": "import" };` tells `tsc` to resolve the specifier as if the importing file were ESM.
+- **ESM the consuming project.** Set `"type": "module"` in its `package.json` and `"module": "nodenext"` / `"moduleResolution": "nodenext"` in its `tsconfig.json`.
+- **Bundler-mode resolution.** Set `"moduleResolution": "bundler"` when a bundler (Vite, esbuild, etc.) loads modules.
+
+This package does not ship a `.d.cts` shadow; the ecosystem is moving to ESM and a CJS resolution context is not a goal here.
 
 ## Related
 
@@ -573,6 +594,10 @@ The cost is the coupling to the hook trick. A future UI5 tooling major bump that
 Issues and pull requests are welcome. Anything goes: bug reports, feature ideas, questions about the design, or notes from using the middleware in a real project. For larger changes, a quick issue first to sketch the approach avoids wasted work.
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (enforced via `commitlint`). Before submitting a PR, run `npm run check` to cover formatting, linting, and type-checks, and `npm test` for the vitest suite.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Credits
 
