@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { connect as netConnect } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -763,7 +764,7 @@ describe("ws-mock middleware", () => {
 				log: createCapturedLogger().log,
 				options: {
 					configuration: {
-						// Handler value is irrelevant — resolution throws before
+						// Handler value is irrelevant; resolution throws before
 						// any handler module is touched.
 						routes: [{ mountPath: "/ws/throws", handler: "irrelevant.ts" }],
 					},
@@ -820,7 +821,7 @@ describe("ws-mock middleware", () => {
 		// of that crash, pre-fix, was an eager call into getSourcePath() that
 		// threw. We assert (a) the factory resolves cleanly, (b) the spy is
 		// never invoked. Whether getProject()/getRootPath() are called too is
-		// an implementation detail — we don't bind to it.
+		// an implementation detail we don't bind to.
 		const getSourcePath = vi.fn(() => {
 			throw new Error("Projects of type module have more than one source path");
 		});
@@ -898,6 +899,186 @@ describe("ws-mock middleware", () => {
 		);
 		const verboseCall = calls.find((c) => c.level === "verbose");
 		expect(verboseCall?.this).toBe(classLog);
+
+		ws.close();
+	});
+
+	it("onError fires for synchronous handler throws", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/onerror-sync-throw.ts", "/ws/oesync");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/oesync`);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		ws.send("trigger");
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "info" && String(e.args.join(" ")).includes("onError:sync sync-boom"),
+		);
+		expect(ws.readyState).toBe(WebSocket.OPEN);
+
+		ws.close();
+	});
+
+	it("onError fires for asynchronous handler rejections", async () => {
+		const args = buildFactoryArgs(
+			"test/fixtures/handlers/onerror-async-reject.ts",
+			"/ws/oeasync",
+		);
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/oeasync`);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		ws.send("trigger");
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "info" && String(e.args.join(" ")).includes("onError:async async-boom"),
+		);
+		expect(ws.readyState).toBe(WebSocket.OPEN);
+
+		ws.close();
+	});
+
+	it("onError fires when ctx.send's encode() throws (PCP empty field name)", async () => {
+		const args = buildFactoryArgs(
+			"test/fixtures/handlers/onerror-encode-throw.ts",
+			"/ws/oeencode",
+		);
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(
+			`ws://127.0.0.1:${serverHandle.port}/ws/oeencode`,
+			"v10.pcp.sap.com",
+		);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "info" &&
+				String(e.args.join(" ")).includes("onError:encode") &&
+				String(e.args.join(" ")).includes("non-empty"),
+		);
+		expect(ws.readyState).toBe(WebSocket.OPEN);
+
+		ws.close();
+	});
+
+	// Regression: adding a `wsClientError` listener silences ws's default
+	// `abortHandshake` call (see abortHandshakeOrEmitwsClientError in
+	// node_modules/ws/lib/websocket-server.js). Once we listen, we own the
+	// cleanup; if we only log, the TCP socket dangles. These tests send
+	// malformed upgrades from raw TCP and verify the socket closes within a
+	// tight window (a regression manifests as the close-race losing to the
+	// fallback timer).
+	async function probeMalformedUpgrade(rawRequest: string): Promise<{
+		response: string;
+		closedInMs: number;
+		destroyed: boolean;
+	}> {
+		const sock = netConnect({ host: "127.0.0.1", port: serverHandle.port });
+		await new Promise<void>((resolve, reject) => {
+			sock.once("connect", () => resolve());
+			sock.once("error", reject);
+		});
+		const start = Date.now();
+		const chunks: Buffer[] = [];
+		sock.on("data", (c) => chunks.push(c));
+		sock.write(rawRequest);
+
+		const closeRace = await Promise.race([
+			new Promise<"closed">((resolve) => sock.once("close", () => resolve("closed"))),
+			new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1000)),
+		]);
+		if (closeRace === "timeout") {
+			sock.destroy();
+			throw new Error(
+				"socket did not close within 1s: wsClientError listener leaked the socket",
+			);
+		}
+		return {
+			response: Buffer.concat(chunks).toString("utf8"),
+			closedInMs: Date.now() - start,
+			destroyed: sock.destroyed,
+		};
+	}
+
+	it("pre-handshake error (missing Sec-WebSocket-Key) logs and closes the socket fast", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const result = await probeMalformedUpgrade(
+			"GET /ws/echo HTTP/1.1\r\n" +
+				"Host: 127.0.0.1\r\n" +
+				"Upgrade: websocket\r\n" +
+				"Connection: Upgrade\r\n" +
+				"Sec-WebSocket-Version: 13\r\n" +
+				"\r\n",
+		);
+
+		expect(result.response).toMatch(/^HTTP\/1\.1 400\b/);
+		expect(result.response).toMatch(/Sec-WebSocket-Key/);
+		expect(result.destroyed).toBe(true);
+		expect(result.closedInMs).toBeLessThan(500);
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "warn" &&
+				String(e.args.join(" ")).includes("pre-handshake client error"),
+		);
+	});
+
+	it("pre-handshake error (non-GET method) also closes the socket without leaking", async () => {
+		// Distinct ws code path from the missing-key case (abortHandshakeOrEmit
+		// is called from a different call site for `req.method !== 'GET'`).
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const result = await probeMalformedUpgrade(
+			"POST /ws/echo HTTP/1.1\r\n" +
+				"Host: 127.0.0.1\r\n" +
+				"Upgrade: websocket\r\n" +
+				"Connection: Upgrade\r\n" +
+				"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+				"Sec-WebSocket-Version: 13\r\n" +
+				"\r\n",
+		);
+
+		expect(result.response).toMatch(/^HTTP\/1\.1 400\b/);
+		expect(result.destroyed).toBe(true);
+		expect(result.closedInMs).toBeLessThan(500);
+	});
+
+	it("onError throws are logged and do not re-enter the hook", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/onerror-throws.ts", "/ws/oeloop");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/oeloop`);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		ws.send("trigger");
+
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "error" && String(e.args.join(" ")).includes("onError threw"),
+		);
+		// `onMessage threw` (original) and `onError threw` (hook) each fire
+		// exactly once. If recursion leaked, multiple `onError threw` lines
+		// would appear.
+		const onErrorThrewCount = args.entries.filter(
+			(e) => e.level === "error" && String(e.args.join(" ")).includes("onError threw"),
+		).length;
+		expect(onErrorThrewCount).toBe(1);
+		expect(ws.readyState).toBe(WebSocket.OPEN);
 
 		ws.close();
 	});

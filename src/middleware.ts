@@ -106,10 +106,10 @@ function resolveHandlerRoot(
  * respond with a sensible close code at upgrade time instead of crashing
  * `ui5 serve`.
  *
- * Uses dynamic `import()` (not `require()`) because the demo package declares
- * `"type": "module"` and `sap-fe-mockserver` installs a `ts-node` hook that
- * intercepts `require()` for `.ts` files and tries to load them as CJS. Going
- * through `import()` sidesteps the hook and uses Node's native type stripping.
+ * Uses dynamic `import()` (not `require()`) because the package declares
+ * `"type": "module"` and Node ≥ 22.18's native type stripping resolves `.ts`
+ * specifiers through the ESM loader. CJS `require()` for `.ts` would need a
+ * loader hook (e.g. `ts-node`), which the middleware deliberately avoids.
  */
 async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
 	const absolute = resolve(handlerRoot, route.handler);
@@ -184,10 +184,10 @@ function createContext(
 	};
 
 	if (mode === "pcp") {
-		// `encode()` only throws on empty field names. The string-sugar path
-		// cannot produce that; the options path can, but the throw is the
-		// caller's mistake (an empty key in `fields`), so it surfaces to the
-		// handler-invocation wrapper instead of being swallowed here.
+		// `encode()` only throws on empty field names. The string overload
+		// cannot produce that; the `EncodeOptions` overload can, but the throw
+		// is the caller's mistake (an empty key in `fields`), so it surfaces to
+		// the handler-invocation wrapper instead of being swallowed here.
 		const send = (message: string | EncodeOptions): void => {
 			const options: EncodeOptions =
 				typeof message === "string" ? { body: message } : message;
@@ -204,7 +204,7 @@ function createContext(
  * Decodes an inbound frame per the negotiated mode.
  *
  *   - plain: forwarded verbatim as a string.
- *   - pcp:   `decode()` is best-effort — frames missing the LFLF separator
+ *   - pcp:   `decode()` is best-effort. Frames missing the LFLF separator
  *            land as a body-only `PcpFrame` with empty `fields`, matching
  *            `SapPcpWebSocket`'s fallback. We surface that fallback at
  *            verbose so operators can tell a malformed frame from an
@@ -221,15 +221,37 @@ function decodeMessage(raw: string, mode: WebSocketMode, log: WebSocketLog): Inb
 	return raw;
 }
 
-/** Awaits a possibly-async handler callback and logs rejections. */
-function invoke(name: string, ctx: WebSocketContext, fn: () => void | Promise<void>): void {
+/**
+ * Awaits a possibly-async handler callback, logs failures, and fans the error
+ * out to the handler's optional `onError` hook. `onError` is best-effort: a
+ * throw or rejection from inside it is logged but does not re-enter the hook.
+ */
+function invoke(
+	name: string,
+	ctx: WebSocketContext,
+	onError: WebSocketHandler["onError"],
+	fn: () => void | Promise<void>,
+): void {
+	const reportError = (err: unknown, kind: "threw" | "rejected"): void => {
+		ctx.log.error(`${name} ${kind}:`, err);
+		if (!onError || name === "onError") return;
+		try {
+			const result = onError(ctx, err);
+			if (result && typeof result.then === "function") {
+				result.catch((hookErr: unknown) => ctx.log.error("onError rejected:", hookErr));
+			}
+		} catch (hookErr) {
+			ctx.log.error("onError threw:", hookErr);
+		}
+	};
+
 	try {
 		const result = fn();
 		if (result && typeof result.then === "function") {
-			result.catch((err: unknown) => ctx.log.error(`${name} rejected:`, err));
+			result.catch((err: unknown) => reportError(err, "rejected"));
 		}
 	} catch (err) {
-		ctx.log.error(`${name} threw:`, err);
+		reportError(err, "threw");
 	}
 }
 
@@ -245,30 +267,35 @@ function attachConnection(
 	baseLog: FactoryParameters["log"],
 ): void {
 	const prefix = `[ws-mock:${loaded.route.mountPath}]`;
-	// Register before any early-return: ws emits 'error' synchronously on
-	// malformed inbound frames; an unlistened emit crashes the process.
-	ws.on("error", (err) => baseLog.error(`${prefix} socket error:`, err));
 
+	// An always-on `'error'` listener is required: Node's EventEmitter contract
+	// crashes the process on an unlistened `'error'`, and `ws` can emit one for
+	// transport faults (malformed inbound frames, post-close races, etc.).
 	if (!loaded.handler) {
+		ws.on("error", (err) => baseLog.error(`${prefix} socket error:`, err));
 		baseLog.error(`${prefix} refusing connection: handler failed to load`, loaded.loadError);
 		ws.close(1011, "handler unavailable");
 		return;
 	}
 	const mode: WebSocketMode = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
 	const ctx = createContext(ws, req, mode, prefix, baseLog);
-	const { onConnect, onMessage, onClose } = loaded.handler;
+	const { onConnect, onMessage, onClose, onError } = loaded.handler;
+	ws.on("error", (err) => {
+		ctx.log.error("socket error:", err);
+		if (onError) invoke("onError", ctx, undefined, () => onError(ctx, err));
+	});
 
 	ctx.log.info(`connect (mode=${mode})`);
 
 	if (onConnect) {
-		invoke("onConnect", ctx, () => onConnect(ctx));
+		invoke("onConnect", ctx, onError, () => onConnect(ctx));
 	}
 
 	ws.on("message", (payload) => {
 		const raw = typeof payload === "string" ? payload : payload.toString("utf8");
 		const message = decodeMessage(raw, mode, ctx.log);
 		if (onMessage) {
-			invoke("onMessage", ctx, () => onMessage(ctx, message));
+			invoke("onMessage", ctx, onError, () => onMessage(ctx, message));
 			return;
 		}
 		ctx.log.verbose("dropped frame (no onMessage)");
@@ -278,7 +305,7 @@ function attachConnection(
 		const reason = reasonBuf ? reasonBuf.toString("utf8") : "";
 		ctx.log.info(`close ${code} ${reason}`);
 		if (onClose) {
-			invoke("onClose", ctx, () => onClose(ctx, code, reason));
+			invoke("onClose", ctx, onError, () => onClose(ctx, code, reason));
 		}
 	});
 }
@@ -313,6 +340,7 @@ export default async function wsMock({
 		log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
 		loaded = await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)));
 	}
+	const byPath = new Map<string, LoadedRoute>();
 	for (const entry of loaded) {
 		const absolute = resolve(handlerRoot, entry.route.handler);
 		if (entry.handler) {
@@ -325,9 +353,6 @@ export default async function wsMock({
 				entry.loadError,
 			);
 		}
-	}
-	const byPath = new Map<string, LoadedRoute>();
-	for (const entry of loaded) {
 		if (byPath.has(entry.route.mountPath)) {
 			log.warn(`[ws-mock] duplicate mountPath ${entry.route.mountPath}; later route wins`);
 		}
@@ -339,6 +364,33 @@ export default async function wsMock({
 			noServer: true,
 			handleProtocols: (protocols: Set<string>): string | false =>
 				protocols.has(SUBPROTOCOL) ? SUBPROTOCOL : false,
+		});
+
+		// `'error'` on a `WebSocketServer` is rare in `noServer` mode (the
+		// HTTP server, not us, owns the listening socket) but Node's
+		// EventEmitter contract crashes the process on an unlistened `'error'`,
+		// so register a logger as cheap insurance.
+		wss.on("error", (err) => log.error("[ws-mock] WebSocketServer error:", err));
+
+		// `'wsClientError'` fires for pre-handshake failures (malformed upgrade
+		// frames, key validation, non-GET methods). Unlistened, ws's default
+		// `abortHandshake` cleans up correctly but silently; we attach purely
+		// to surface a `warn` line in the UI5 terminal. Attaching transfers
+		// cleanup ownership, so `socket.end(...)` below mirrors ws's response
+		// shape (status, `Connection: close`, length, `finish` then destroy).
+		wss.on("wsClientError", (err, socket, req) => {
+			log.warn(`[ws-mock] pre-handshake client error on ${req?.url ?? "?"}:`, err);
+			if (socket.writable) {
+				const body = err.message;
+				socket.once("finish", () => socket.destroy());
+				socket.end(
+					`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n` +
+						`Content-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n` +
+						body,
+				);
+			} else {
+				socket.destroy();
+			}
 		});
 
 		server.on("upgrade", (req, socket, head) => {
