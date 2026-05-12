@@ -56,6 +56,7 @@
 		"prepublishOnly": "npm run check && npm run build && npm test"
 	},
 	"dependencies": {
+		"@types/ws": "^8.18.1",
 		"ui5-utils-express": "^1.5.1",
 		"ws": "^8.20.0"
 	},
@@ -63,7 +64,6 @@
 		"@commitlint/cli": "^20.5.3",
 		"@commitlint/config-conventional": "^20.5.3",
 		"@types/node": "^22.19.17",
-		"@types/ws": "^8.18.1",
 		"@vitest/coverage-v8": "^4.1.5",
 		"husky": "^9.1.7",
 		"lint-staged": "^16.4.0",
