@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.3.0...v0.3.1) (2026-05-13)
+
+
+### Code Refactoring
+
+* **middleware:** drop redundant undefined-onError arg in socket-error invoke call ([e530bee](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/e530beec1e4e418e15bd73fc67176e07872dd77a))
+* **middleware:** surface connection errors via onError hook and server listeners ([b730b61](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/b730b619ca25873f319cc729c3e4215c82417db7))
+* **pcp:** widen bodyType union and cache unescape regex ([2377143](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/2377143326e8d23a88f226d6627f8645f93e0002))
+* **types:** mode-discriminated ctx with PCP-aware send overload ([f711acb](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/f711acb4c13c39be0bafc0c444217b687b50c95a))
+
 ## [0.3.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.2.1...v0.3.0) (2026-05-11)
 
 
