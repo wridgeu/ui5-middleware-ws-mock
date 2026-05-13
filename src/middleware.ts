@@ -278,7 +278,7 @@ function attachConnection(
 	const { onConnect, onMessage, onClose, onError } = loaded.handler;
 	ws.on("error", (err) => {
 		ctx.log.error("socket error:", err);
-		if (onError) invoke("onError", ctx, undefined, () => onError(ctx, err));
+		if (onError) invoke("onError", ctx, onError, () => onError(ctx, err));
 	});
 
 	ctx.log.info(`connect (mode=${mode})`);
