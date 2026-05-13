@@ -35,8 +35,8 @@ interface WebSocketContextBase {
  * middleware does not frame the wire: `ctx.send(message)` writes the string
  * through `ws.send` verbatim.
  *
- * Non-open sockets and synchronous `ws.send` throws are logged and swallowed;
- * `send` never throws.
+ * `send` does not throw. Closed sockets and synchronous `ws.send` throws are
+ * caught and routed to `ctx.log` (`warn` and `error` respectively).
  */
 export interface PlainWebSocketContext extends WebSocketContextBase {
 	mode: "plain";
@@ -56,10 +56,10 @@ export interface PlainWebSocketContext extends WebSocketContextBase {
  * the same socket, custom separator handling, etc.) reach for `ctx.ws.send`
  * with a pre-built wire string.
  *
- * Non-open sockets and synchronous `ws.send` throws are logged and swallowed.
- * `encode()` throws on empty PCP field names; that throw propagates out of
- * `send` and is caught by the handler-invocation wrapper (logged at `error`,
- * connection stays open).
+ * Same failure handling as `PlainWebSocketContext.send`, plus one PCP-only
+ * case: an empty field name makes `encode()` throw. `send` does not catch
+ * that throw; the handler-invocation wrapper does, logs it, and leaves the
+ * connection open.
  */
 export interface PcpWebSocketContext extends WebSocketContextBase {
 	mode: "pcp";

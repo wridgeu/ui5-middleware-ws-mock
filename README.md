@@ -287,7 +287,7 @@ The middleware does not interpret the bytes:
 - **PCP mode, string.** `message` is wrapped in a default PCP frame (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra header fields) with `message` as the body.
 - **PCP mode, `EncodeOptions`.** The middleware calls `encode(message)` internally and writes the resulting wire string. `EncodeOptions` is re-exported from the package root.
 
-Non-open sockets and synchronous `ws.send` throws are logged and swallowed; callers never observe a throw.
+`ctx.send` never throws; failure cases (closed socket, `ws.send` throw, `encode()` throw on an empty PCP field name) are summarized in [Error handling](#error-handling).
 
 For binary payloads, base64-encode the bytes and pass `bodyType: "binary"`:
 
@@ -303,14 +303,18 @@ For framing the public encoder cannot express (alternate separator handling, raw
 
 When a route is single-mode by contract (a PCP-only endpoint where any plain client is a bug, for instance), narrowing on `ctx.mode` at every call site adds noise. Two type-safe patterns let you skip the per-call narrow. Both rely on the named branches of the discriminated union (`PlainWebSocketContext` / `PcpWebSocketContext`), which are re-exported from the package root alongside `WebSocketContext`.
 
-**Early-return narrow (recommended).** A single guard at the top of the callback fails loudly on a wrong assumption and narrows `ctx` for the rest of the function body:
+**Early-return narrow (recommended).** A single guard at the top of the callback rejects a wrong-mode client and narrows `ctx` for the rest of the function body. Closing the connection is the loud part; a bare `throw` would only log under the handler-invocation wrapper and leave the wrong-mode client connected:
 
 ```typescript
 import type { WebSocketHandler } from "ui5-middleware-ws-mock";
 
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
-		if (ctx.mode !== "pcp") throw new Error("route requires PCP subprotocol");
+		if (ctx.mode !== "pcp") {
+			ctx.log.warn(`rejecting non-PCP client (mode=${ctx.mode})`);
+			ctx.close(1008, "route requires PCP subprotocol"); // 1008 = Policy Violation
+			return;
+		}
 		// ctx is narrowed to PcpWebSocketContext for the rest of the body.
 		ctx.send({ action: "HELLO", body: "" });
 	},
@@ -319,7 +323,7 @@ const handler: WebSocketHandler = {
 export default handler;
 ```
 
-If the same assumption recurs across handlers, factor it into a TypeScript `asserts` helper. The predicate has the same narrowing effect as the inline `if/throw` but is reusable:
+If the same assumption recurs across handlers, factor it into a TypeScript `asserts` helper. The predicate gives the same compile-time narrowing as the inline `if/return` (the runtime close is then the caller's responsibility, or the helper can call `ctx.close` and `throw` so the wrapper logs once before the connection drops):
 
 ```typescript
 import type {
@@ -329,7 +333,10 @@ import type {
 } from "ui5-middleware-ws-mock";
 
 function assertPcp(ctx: WebSocketContext): asserts ctx is PcpWebSocketContext {
-	if (ctx.mode !== "pcp") throw new Error("expected PCP route");
+	if (ctx.mode !== "pcp") {
+		ctx.close(1008, "route requires PCP subprotocol");
+		throw new Error(`expected PCP route, got mode=${ctx.mode}`);
+	}
 }
 
 const handler: WebSocketHandler = {
@@ -342,7 +349,7 @@ const handler: WebSocketHandler = {
 export default handler;
 ```
 
-Direct parameter narrowing (`onConnect: (ctx: PcpWebSocketContext) => …`) is rejected by TypeScript; see [Troubleshooting](#troubleshooting) for the exact error and why. A `ctx as PcpWebSocketContext` cast is not recommended either: it strips the runtime check the early-return pattern gives you and turns a misnegotiated connection into silently-dropped frames.
+Direct parameter narrowing (`onConnect: (ctx: PcpWebSocketContext) => …`) is rejected by TypeScript; see [Troubleshooting](#troubleshooting) for the exact error and why. A `ctx as PcpWebSocketContext` cast is not recommended either: it strips the runtime check the early-return pattern gives you. On a misnegotiated (plain-mode) connection the cast lets a handler call `ctx.send({ action, body })`, which plain mode's `(message: string) => void` receives as a non-string. `ws.send` then transmits the object's stringified form (typically `[object Object]`), so the peer sees a malformed frame rather than a clean negotiation failure.
 
 ### Inbound `message`
 
