@@ -25,6 +25,7 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { IncomingMessage, Server } from "node:http";
+import { Buffer } from "node:buffer";
 import { WebSocketServer, type WebSocket } from "ws";
 // @ts-expect-error -- ui5-utils-express ships no type declarations; the module is a thin
 // server-listening hook that returns a UI5-compatible middleware factory.
@@ -196,6 +197,19 @@ function createContext(
 }
 
 /**
+ * Normalizes a `ws` message payload to a UTF-8 string. `ws` delivers
+ * `Buffer | ArrayBuffer | Buffer[]` (`WebSocket.RawData`) depending on
+ * `binaryType` and whether the frame is fragmented. We accept all three so
+ * the middleware keeps working if a consumer flips `binaryType` upstream of
+ * us; the default (`nodebuffer`) always produces a single `Buffer`.
+ */
+function toUtf8(payload: WebSocket.RawData): string {
+	if (Buffer.isBuffer(payload)) return payload.toString("utf8");
+	if (Array.isArray(payload)) return Buffer.concat(payload).toString("utf8");
+	return Buffer.from(payload).toString("utf8");
+}
+
+/**
  * Decodes an inbound frame per the negotiated mode.
  *
  *   - plain: forwarded verbatim as a string.
@@ -287,8 +301,8 @@ function attachConnection(
 		invoke("onConnect", ctx, onError, () => onConnect(ctx));
 	}
 
-	ws.on("message", (payload) => {
-		const raw = typeof payload === "string" ? payload : payload.toString("utf8");
+	ws.on("message", (payload: WebSocket.RawData) => {
+		const raw = toUtf8(payload);
 		const message = decodeMessage(raw, mode, ctx.log);
 		if (onMessage) {
 			invoke("onMessage", ctx, onError, () => onMessage(ctx, message));
