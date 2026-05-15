@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.2](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.3.1...v0.3.2) (2026-05-15)
+
+
+### Bug Fixes
+
+* **middleware:** normalize ws message payloads via WebSocket.RawData ([d48ac0f](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/d48ac0fd8877cd0e9880d9c2d33493092e2e6a8b))
+
+
+### Code Refactoring
+
+* **middleware:** cache absolute handler path, scope handlerRoot, drop dead branches ([5e0d6e0](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/5e0d6e0041f5ff4560fd59630bad65f4b65a1ba6))
+* **pcp:** simplify unescape to a single-pass regex with regression tests ([f31faf9](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/f31faf9d88481baa496cd2797df1ff7c4a7fe596))
+
 ## [0.3.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.3.0...v0.3.1) (2026-05-13)
 
 
