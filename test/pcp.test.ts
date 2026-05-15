@@ -7,13 +7,73 @@ describe("SUBPROTOCOL", () => {
 	});
 });
 
-describe("pcpEscape / pcpUnescape", () => {
+describe("pcpEscape", () => {
 	it("escapes backslash, colon, and newline", () => {
 		expect(pcpEscape("a\\b")).toBe("a\\\\b");
 		expect(pcpEscape("k:v")).toBe("k\\:v");
 		expect(pcpEscape("a\nb")).toBe("a\\nb");
 	});
 
+	it("escapes backslash before colon/newline (order matters)", () => {
+		// Backslash MUST be escaped first; otherwise the colon escape's
+		// inserted backslash would itself get escaped on the second pass.
+		expect(pcpEscape(":")).toBe("\\:");
+		expect(pcpEscape("\n")).toBe("\\n");
+		expect(pcpEscape("\\")).toBe("\\\\");
+		expect(pcpEscape("\\:")).toBe("\\\\\\:");
+	});
+
+	it("returns the input unchanged when there is nothing to escape", () => {
+		expect(pcpEscape("")).toBe("");
+		expect(pcpEscape("plain")).toBe("plain");
+		expect(pcpEscape("héllo-世界")).toBe("héllo-世界");
+	});
+});
+
+describe("pcpUnescape", () => {
+	it("decodes the three recognized escapes", () => {
+		expect(pcpUnescape("\\\\")).toBe("\\");
+		expect(pcpUnescape("\\:")).toBe(":");
+		expect(pcpUnescape("\\n")).toBe("\n");
+	});
+
+	it("returns the input unchanged when there is nothing to unescape", () => {
+		expect(pcpUnescape("")).toBe("");
+		expect(pcpUnescape("plain")).toBe("plain");
+		expect(pcpUnescape("héllo-世界")).toBe("héllo-世界");
+	});
+
+	it("decodes adjacent escapes left-to-right without overlap", () => {
+		// `\\` consumes both characters before the next match attempt, so a
+		// following `\:` or `\n` cannot be eaten by a greedy second pass —
+		// this is the failure mode the placeholder dance used to guard.
+		expect(pcpUnescape("\\\\:")).toBe("\\:");
+		expect(pcpUnescape("\\\\\\:")).toBe("\\:");
+		expect(pcpUnescape("\\\\\\\\")).toBe("\\\\");
+		expect(pcpUnescape("\\\\n")).toBe("\\n");
+		expect(pcpUnescape("\\\\\\n")).toBe("\\\n");
+	});
+
+	it("passes a stray backslash through when followed by a non-escape character", () => {
+		// The PCP spec defines exactly three escapes (`\\`, `\:`, `\n`); any
+		// other backslash sequence is undefined. We mirror SapPcpWebSocket
+		// and leave such bytes untouched.
+		expect(pcpUnescape("\\x")).toBe("\\x");
+		expect(pcpUnescape("a\\zb")).toBe("a\\zb");
+	});
+
+	it("passes a trailing backslash through when nothing follows", () => {
+		expect(pcpUnescape("trailing\\")).toBe("trailing\\");
+	});
+
+	it("decodes a single escape regardless of position", () => {
+		expect(pcpUnescape("a\\:b")).toBe("a:b");
+		expect(pcpUnescape("\\:lead")).toBe(":lead");
+		expect(pcpUnescape("trail\\:")).toBe("trail:");
+	});
+});
+
+describe("pcpEscape / pcpUnescape round-trip", () => {
 	it("round-trips ascii", () => {
 		expect(pcpUnescape(pcpEscape("hello"))).toBe("hello");
 	});
@@ -26,6 +86,21 @@ describe("pcpEscape / pcpUnescape", () => {
 	it("round-trips repeated backslashes without double-substitution", () => {
 		const input = "a\\\\:b";
 		expect(pcpUnescape(pcpEscape(input))).toBe(input);
+	});
+
+	it("round-trips every pairwise combination of special characters", () => {
+		// Exhaustive over short permutations of the three escape-active
+		// characters plus a benign filler, to catch any positional bug the
+		// hand-picked cases above might miss.
+		const atoms = ["\\", ":", "\n", "x"];
+		for (const a of atoms) {
+			for (const b of atoms) {
+				for (const c of atoms) {
+					const input = a + b + c;
+					expect(pcpUnescape(pcpEscape(input))).toBe(input);
+				}
+			}
+		}
 	});
 });
 
