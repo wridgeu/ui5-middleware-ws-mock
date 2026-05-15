@@ -28,15 +28,6 @@ const PCP_BODY_TYPE = "pcp-body-type";
 const DEFAULT_ACTION = "MESSAGE";
 const DEFAULT_BODY_TYPE = "text";
 
-/**
- * Placeholder (U+0008 BACKSPACE) used while unescaping to avoid
- * double-substituting `\\` sequences. Written as the explicit `\u0008`
- * escape because the literal character is invisible in most editors and
- * easy to delete by accident.
- */
-const UNESCAPE_PLACEHOLDER = "\u0008";
-const UNESCAPE_PLACEHOLDER_RE = new RegExp(UNESCAPE_PLACEHOLDER, "g");
-
 /** WebSocket subprotocol identifier for PCP v1.0. */
 export const SUBPROTOCOL = "v10.pcp.sap.com";
 
@@ -50,20 +41,14 @@ export function pcpEscape(value: string): string {
 /**
  * Unescape a header name or value per the PCP spec.
  *
- * Uses a non-printable placeholder (U+0008) while reversing escapes, matching
- * the trick SapPcpWebSocket uses to avoid double-substitution of `\\`.
+ * One left-to-right pass over `\\\\`, `\\:`, `\\n`. The regex consumes both
+ * characters of every escape before advancing, so a doubled backslash cannot
+ * collide with a following `\\:` or `\\n` — no placeholder character needed
+ * (SapPcpWebSocket reaches for one only because it does three sequential
+ * `replace` passes and has to keep them from interfering).
  */
 export function pcpUnescape(value: string): string {
-	return value
-		.split(UNESCAPE_PLACEHOLDER)
-		.map((part) =>
-			part
-				.replace(/\\\\/g, UNESCAPE_PLACEHOLDER)
-				.replace(/\\:/g, ":")
-				.replace(/\\n/g, "\n")
-				.replace(UNESCAPE_PLACEHOLDER_RE, "\\"),
-		)
-		.join(UNESCAPE_PLACEHOLDER);
+	return value.replace(/\\(\\|:|n)/g, (_, c: string) => (c === "n" ? "\n" : c));
 }
 
 /**
