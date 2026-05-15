@@ -44,6 +44,8 @@ import { decode, encode, SUBPROTOCOL, type EncodeOptions } from "./pcp.js";
 
 interface LoadedRoute {
 	route: WebSocketRoute;
+	/** Absolute path the handler module was (or would have been) loaded from. */
+	absolutePath: string;
 	handler: WebSocketHandler | null;
 	loadError?: unknown;
 }
@@ -77,7 +79,6 @@ interface FactoryParameters {
 }
 
 interface HookCallbackArgs {
-	app: unknown;
 	server: Server;
 }
 
@@ -108,21 +109,22 @@ function resolveHandlerRoot(
  * `ui5 serve`.
  */
 async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
-	const absolute = resolve(handlerRoot, route.handler);
+	const absolutePath = resolve(handlerRoot, route.handler);
 	try {
-		const mod = (await import(pathToFileURL(absolute).href)) as {
+		const mod = (await import(pathToFileURL(absolutePath).href)) as {
 			default?: WebSocketHandler;
 		};
 		if (!mod.default) {
 			return {
 				route,
+				absolutePath,
 				handler: null,
 				loadError: new Error(`handler module ${route.handler} has no default export`),
 			};
 		}
-		return { route, handler: mod.default };
+		return { route, absolutePath, handler: mod.default };
 	} catch (loadError) {
-		return { route, handler: null, loadError };
+		return { route, absolutePath, handler: null, loadError };
 	}
 }
 
@@ -312,7 +314,7 @@ function attachConnection(
 	});
 
 	ws.on("close", (code, reasonBuf) => {
-		const reason = reasonBuf ? reasonBuf.toString("utf8") : "";
+		const reason = reasonBuf.toString("utf8");
 		ctx.log.info(`close ${code} ${reason}`);
 		if (onClose) {
 			invoke("onClose", ctx, onError, () => onClose(ctx, code, reason));
@@ -342,24 +344,22 @@ export default async function wsMock({
 	// Resolve lazily: with no routes there's nothing to load, and skipping the
 	// resolve avoids crashing on Module-type projects (whose getSourcePath()
 	// throws) when this middleware is declared but unused.
-	let handlerRoot = "";
-	let loaded: LoadedRoute[] = [];
+	const loaded: LoadedRoute[] = [];
 	if (routes.length > 0) {
 		const project = middlewareUtil.getProject();
-		handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
+		const handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
 		log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
-		loaded = await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)));
+		loaded.push(...(await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)))));
 	}
+
 	const byPath = new Map<string, LoadedRoute>();
 	for (const entry of loaded) {
-		const absolute = resolve(handlerRoot, entry.route.handler);
+		const tag = `[ws-mock:${entry.route.mountPath}]`;
 		if (entry.handler) {
-			log.info(
-				`[ws-mock:${entry.route.mountPath}] handler loaded from ${entry.route.handler} (${absolute})`,
-			);
+			log.info(`${tag} handler loaded from ${entry.route.handler} (${entry.absolutePath})`);
 		} else {
 			log.error(
-				`[ws-mock:${entry.route.mountPath}] handler load failed from ${entry.route.handler} (${absolute}):`,
+				`${tag} handler load failed from ${entry.route.handler} (${entry.absolutePath}):`,
 				entry.loadError,
 			);
 		}
