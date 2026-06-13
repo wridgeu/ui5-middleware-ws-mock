@@ -7,10 +7,13 @@
  * serve process. The server's `upgrade` event is hooked via the community
  * utility `ui5-utils-express/lib/hook` (which intercepts `app.listen` to
  * grab the underlying HTTP server; see the hook source for the full trick).
- * On each upgrade we check the request's pathname against our route table,
- * hand the socket to `wss.handleUpgrade` if we own it, and otherwise bail
- * without claiming the upgrade so other middleware (fe-mockserver etc.)
- * can handle the request. Unparseable urls log at verbose and bail too.
+ * On each upgrade we match the request's pathname against our route table —
+ * `path-to-regexp` patterns tried in declaration order, first match wins —
+ * and on a match hand the socket to `wss.handleUpgrade`, exposing any
+ * extracted path parameters on `ctx.params`. A pathname that matches no route
+ * (or whose percent-encoding cannot be decoded) is left unclaimed so other
+ * middleware (fe-mockserver etc.) can handle it. Unparseable urls log at
+ * verbose and bail too.
  *
  * PCP subprotocol negotiation is declared via `handleProtocols` at
  * WebSocketServer construction: if the client offered `v10.pcp.sap.com` we
@@ -19,7 +22,9 @@
  *
  * The middleware is transport-only beyond the wire layer: plain frames are
  * forwarded as raw strings, PCP frames are decoded into `{ fields, body }`.
- * Application-level routing and payload encoding are the handler's job.
+ * Path-level routing (pattern matching, `ctx.params`) is handled here;
+ * application-level routing (named messages → callbacks) and payload encoding
+ * remain the handler's job.
  */
 
 import { resolve } from "node:path";
@@ -91,6 +96,11 @@ interface HookCallbackArgs {
 	server: Server;
 }
 
+/** Route-scoped log prefix, e.g. `[ws-mock:/ws/foo]`. */
+function routeTag(mountPath: string): string {
+	return `[ws-mock:${mountPath}]`;
+}
+
 /**
  * Resolves the effective root that `routes[].handler` paths resolve against:
  *
@@ -113,9 +123,11 @@ function resolveHandlerRoot(
 }
 
 /**
- * Eagerly loads a handler module. Failures are captured so the route can
- * respond with a sensible close code at upgrade time instead of crashing
- * `ui5 serve`.
+ * Builds the per-route record: compiles the `mountPath` into a
+ * `path-to-regexp` matcher and eagerly imports the handler module. Both
+ * failures are captured (`matchError` / `loadError`) rather than thrown, so an
+ * invalid pattern or a broken handler surfaces as a startup log plus a disabled
+ * or self-closing route instead of crashing `ui5 serve`.
  */
 async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
 	const absolutePath = resolve(handlerRoot, route.handler);
@@ -330,7 +342,7 @@ function attachConnection(
 	params: RouteParams,
 	baseLog: FactoryParameters["log"],
 ): void {
-	const prefix = `[ws-mock:${loaded.route.mountPath}]`;
+	const prefix = routeTag(loaded.route.mountPath);
 
 	// An always-on `'error'` listener is required: Node's EventEmitter contract
 	// crashes the process on an unlistened `'error'`, and `ws` can emit one for
@@ -396,7 +408,7 @@ function matchRoute(
 			if (result) return { entry, params: result.params };
 		} catch (err) {
 			log.verbose(
-				`[ws-mock:${entry.route.mountPath}] ignoring ${pathname}: ` +
+				`${routeTag(entry.route.mountPath)} ignoring ${pathname}: ` +
 					`match threw (malformed percent-encoding?):`,
 				err,
 			);
@@ -440,7 +452,7 @@ export default async function wsMock({
 	// duplicate mountPath is shadowed by the earlier entry and can never match.
 	const seenPaths = new Set<string>();
 	for (const entry of loaded) {
-		const tag = `[ws-mock:${entry.route.mountPath}]`;
+		const tag = routeTag(entry.route.mountPath);
 		if (entry.handler) {
 			log.info(`${tag} handler loaded from ${entry.route.handler} (${entry.absolutePath})`);
 		} else {
