@@ -1118,4 +1118,78 @@ describe("ws-mock middleware", () => {
 
 		ws.close();
 	});
+
+	it("ctx.data starts empty and persists across onConnect and onMessage frames", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/counter-data.ts", "/ws/counter");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/counter`);
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		// onConnect observed the bag the middleware created: an empty object.
+		expect((await ready)[0]).toBe("init:empty=true");
+
+		// Three frames; the count survives because every callback shares one bag.
+		const counts = waitForMessages(ws, 3);
+		ws.send("a");
+		ws.send("b");
+		ws.send("c");
+		expect(await counts).toEqual(["count=1", "count=2", "count=3"]);
+
+		ws.close();
+	});
+
+	it("ctx.data is isolated per connection", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/counter-data.ts", "/ws/counter");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const wsA = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/counter`);
+		const readyA = waitForMessages(wsA, 1);
+		await new Promise<void>((resolve) => wsA.once("open", resolve));
+		await readyA;
+
+		const wsB = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/counter`);
+		const readyB = waitForMessages(wsB, 1);
+		await new Promise<void>((resolve) => wsB.once("open", resolve));
+		await readyB;
+
+		// A advances twice; B's bag must be untouched and start fresh at 1.
+		const aCounts = waitForMessages(wsA, 2);
+		wsA.send("x");
+		wsA.send("y");
+		expect(await aCounts).toEqual(["count=1", "count=2"]);
+
+		const bCount = waitForMessages(wsB, 1);
+		wsB.send("x");
+		expect(await bCount).toEqual(["count=1"]);
+
+		wsA.close();
+		wsB.close();
+	});
+
+	it("the same ctx.data reaches the onClose hook", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/counter-data.ts", "/ws/counter");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/counter`);
+		const ready = waitForMessages(ws, 1);
+		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await ready;
+
+		const counts = waitForMessages(ws, 2);
+		ws.send("a");
+		ws.send("b");
+		await counts;
+
+		ws.close();
+		// onClose reads ctx.data.count and logs it; the value proves the close
+		// hook saw the same bag the message frames mutated.
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "info" && String(e.args.join(" ")).includes("final count=2"),
+		);
+	});
 });

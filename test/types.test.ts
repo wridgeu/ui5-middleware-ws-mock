@@ -8,6 +8,11 @@ import type {
 	WebSocketHandler,
 } from "../src/index.js";
 
+interface CounterState {
+	count: number;
+	userId?: string;
+}
+
 /**
  * Type-level regression tests for the discriminated `ctx.send` surface and
  * the single-mode narrowing patterns documented in the README. The assertions
@@ -70,5 +75,48 @@ describe("narrowing", () => {
 			onConnect: (ctx: PcpWebSocketContext) => ctx.send({ body: "x" }),
 		};
 		expectTypeOf(bad).toMatchTypeOf<WebSocketHandler>();
+	});
+});
+
+describe("ctx.data bag", () => {
+	it("defaults to a loose Record when no type argument is supplied", () => {
+		expectTypeOf<WebSocketContext["data"]>().toEqualTypeOf<Record<string, unknown>>();
+		expectTypeOf<PlainWebSocketContext["data"]>().toEqualTypeOf<Record<string, unknown>>();
+		expectTypeOf<PcpWebSocketContext["data"]>().toEqualTypeOf<Record<string, unknown>>();
+	});
+
+	it("threads the type argument into data on every branch", () => {
+		expectTypeOf<WebSocketContext<CounterState>["data"]>().toEqualTypeOf<CounterState>();
+		expectTypeOf<PlainWebSocketContext<CounterState>["data"]>().toEqualTypeOf<CounterState>();
+		expectTypeOf<PcpWebSocketContext<CounterState>["data"]>().toEqualTypeOf<CounterState>();
+	});
+
+	it("preserves TData when narrowing on ctx.mode (the issue #16 blocker)", () => {
+		// Mirror `if (ctx.mode === "pcp")` at the type level. The narrow must
+		// keep `data` typed as `CounterState`, not collapse it to the default.
+		type Narrowed<M extends WebSocketContext["mode"]> = Extract<
+			WebSocketContext<CounterState>,
+			{ mode: M }
+		>;
+		expectTypeOf<Narrowed<"pcp">>().toEqualTypeOf<PcpWebSocketContext<CounterState>>();
+		expectTypeOf<Narrowed<"plain">>().toEqualTypeOf<PlainWebSocketContext<CounterState>>();
+		expectTypeOf<Narrowed<"pcp">["data"]>().toEqualTypeOf<CounterState>();
+		expectTypeOf<Narrowed<"plain">["data"]>().toEqualTypeOf<CounterState>();
+	});
+
+	it("flows TData from WebSocketHandler into every callback's ctx", () => {
+		type Handler = WebSocketHandler<CounterState>;
+		expectTypeOf<NonNullable<Handler["onConnect"]>>()
+			.parameter(0)
+			.toEqualTypeOf<WebSocketContext<CounterState>>();
+		expectTypeOf<NonNullable<Handler["onMessage"]>>()
+			.parameter(0)
+			.toEqualTypeOf<WebSocketContext<CounterState>>();
+		expectTypeOf<NonNullable<Handler["onClose"]>>()
+			.parameter(0)
+			.toEqualTypeOf<WebSocketContext<CounterState>>();
+		expectTypeOf<NonNullable<Handler["onError"]>>()
+			.parameter(0)
+			.toEqualTypeOf<WebSocketContext<CounterState>>();
 	});
 });

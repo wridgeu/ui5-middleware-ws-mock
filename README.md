@@ -250,15 +250,16 @@ All callbacks are optional. A handler that only implements `onMessage` is valid;
 
 `WebSocketContext` is a discriminated union on `mode` (defined in [`src/types.ts`](src/types.ts)). Every callback receives one of the two members (`PlainWebSocketContext` or `PcpWebSocketContext`, both re-exported from the package root). TypeScript narrows the union on `ctx.mode === "pcp"` / `"plain"`, which unlocks the appropriate `send` signature:
 
-| Field       | Type                                                                                    | Description                                                                                                                                                  |
-| ----------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ws`        | `WebSocket`                                                                             | Raw `ws` instance. Required for any framing the helper methods do not cover.                                                                                 |
-| `req`       | `http.IncomingMessage`                                                                  | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                               |
-| `mode`      | `"pcp" \| "plain"`                                                                      | Negotiated at the handshake; fixed for the lifetime of the connection. Discriminant for the union; narrow on it to interpret `message` and choose `send`.    |
-| `log`       | `WebSocketLog`                                                                          | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.        |
-| `send`      | plain: `(message: string) => void`<br>pcp: `(message: string \| EncodeOptions) => void` | Send a frame. Plain mode writes the bytes through `ws.send` unchanged. PCP mode accepts a string (wrapped in a default frame) or `EncodeOptions`. See below. |
-| `close`     | `(code?, reason?) => void`                                                              | Close the connection with optional code (default 1000) and reason.                                                                                           |
-| `terminate` | `() => void`                                                                            | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                               |
+| Field       | Type                                                                                    | Description                                                                                                                                                                                                                            |
+| ----------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ws`        | `WebSocket`                                                                             | Raw `ws` instance. Required for any framing the helper methods do not cover.                                                                                                                                                           |
+| `req`       | `http.IncomingMessage`                                                                  | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                                                                                                         |
+| `mode`      | `"pcp" \| "plain"`                                                                      | Negotiated at the handshake; fixed for the lifetime of the connection. Discriminant for the union; narrow on it to interpret `message` and choose `send`.                                                                              |
+| `log`       | `WebSocketLog`                                                                          | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.                                                                                  |
+| `data`      | `TData` (default `Record<string, unknown>`)                                             | Per-connection scratch bag, shared by reference across every callback for one connection and discarded when it ends. Type it via `WebSocketHandler<TData>`. See [Stateful per-connection handlers](#stateful-per-connection-handlers). |
+| `send`      | plain: `(message: string) => void`<br>pcp: `(message: string \| EncodeOptions) => void` | Send a frame. Plain mode writes the bytes through `ws.send` unchanged. PCP mode accepts a string (wrapped in a default frame) or `EncodeOptions`. See below.                                                                           |
+| `close`     | `(code?, reason?) => void`                                                              | Close the connection with optional code (default 1000) and reason.                                                                                                                                                                     |
+| `terminate` | `() => void`                                                                            | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                                                                                                         |
 
 Calling `ctx.send("text")` is legal in either branch because `string` is in both signatures, so call sites that do not need PCP-specific framing do not need to narrow first. Calling `ctx.send({ action: "...", body: "..." })` requires the PCP narrow.
 
@@ -411,7 +412,28 @@ The plain-mode wire shape (`ACTION:body` here) is whatever your client speaks; p
 
 ### Stateful per-connection handlers
 
-Per-connection state belongs in a `WeakMap` keyed by `ctx`; the entry is collected automatically when the connection ends.
+Per-connection state lives on `ctx.data`, a scratch bag the middleware creates fresh for each connection and hands to every callback. Parameterize the handler to type it; reads then need no cast:
+
+```typescript
+import type { WebSocketHandler } from "ui5-middleware-ws-mock";
+
+const handler: WebSocketHandler<{ count: number }> = {
+	onConnect: (ctx) => {
+		ctx.data.count = 0;
+		ctx.send("HELLO");
+	},
+	onMessage: (ctx) => {
+		ctx.data.count += 1;
+		ctx.send(`count=${ctx.data.count}`);
+	},
+};
+
+export default handler;
+```
+
+`ctx.data` starts as an empty object and is the same reference in `onConnect`, `onMessage`, `onClose`, and `onError`; it is collected when the connection's context is. The type argument is an assertion about what you put in the bag (nothing is populated for you), so declare lazily-set fields optional and set required ones in `onConnect` before reading them. The type is preserved when you narrow on `ctx.mode`, so `ctx.data` stays typed inside an `if (ctx.mode === "pcp")` branch. Without a type argument `ctx.data` is `Record<string, unknown>`: writes take any key, reads come back `unknown`.
+
+If you would rather key state externally (or keep state off the public context), a `WeakMap<WebSocketContext, State>` works too and is collected on the same schedule:
 
 ```typescript
 const state = new WeakMap<WebSocketContext, { count: number }>();
