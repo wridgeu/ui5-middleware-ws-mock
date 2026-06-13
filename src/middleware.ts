@@ -129,10 +129,14 @@ async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<
 }
 
 /**
- * Builds the `ctx` object handed to every handler callback. `send` / `close`
- * / `terminate` are self-contained and never throw: closed sockets and
- * synchronous `ws.send` / `ws.close` / `ws.terminate` throws are caught here
- * and routed to the prefix-aware logger.
+ * Builds the `ctx` object handed to every handler callback. `close`,
+ * `terminate`, and plain-mode `send` are self-contained and never throw:
+ * closed sockets and synchronous `ws.send` / `ws.close` / `ws.terminate`
+ * throws are caught here and routed to the prefix-aware logger. PCP-mode
+ * `send` is the one exception: it calls `encode()`, and an empty field name
+ * makes `encode()` throw. That throw is intentionally not caught here (see
+ * below) so it surfaces to the handler-invocation wrapper as the caller's
+ * mistake.
  */
 function createContext(
 	ws: WebSocket,
@@ -233,10 +237,45 @@ function decodeMessage(raw: string, mode: WebSocketMode, log: WebSocketLog): Inb
 }
 
 /**
- * Awaits a possibly-async handler callback, logs failures, and fans the error
- * out to the handler's optional `onError` hook. `onError` is best-effort: a
- * throw or rejection from inside it is logged but does not trigger another
- * `onError` call (would otherwise recurse).
+ * Runs `fn` and routes a synchronous throw or an async rejection to `onFail`,
+ * tagged with which one occurred. Centralizing the sync/async catch here keeps
+ * callers from repeating the try/catch-plus-`.catch()` dance.
+ */
+function settle(
+	fn: () => void | Promise<void>,
+	onFail: (err: unknown, kind: "threw" | "rejected") => void,
+): void {
+	try {
+		const result = fn();
+		if (result && typeof result.then === "function") {
+			result.catch((err: unknown) => onFail(err, "rejected"));
+		}
+	} catch (err) {
+		onFail(err, "threw");
+	}
+}
+
+/**
+ * Runs the handler's optional `onError` hook and logs a failure originating
+ * from the hook itself. Because the hook runs through `settle` whose `onFail`
+ * only logs, re-entry is structurally impossible: `onError` is never invoked
+ * from inside its own failure path.
+ */
+function notifyError(
+	ctx: WebSocketContext,
+	onError: WebSocketHandler["onError"],
+	err: unknown,
+): void {
+	if (!onError) return;
+	settle(
+		() => onError(ctx, err),
+		(hookErr, kind) => ctx.log.error(`onError ${kind}:`, hookErr),
+	);
+}
+
+/**
+ * Awaits a possibly-async handler callback, logs the failure, and fans it out
+ * to the handler's optional `onError` hook via `notifyError`.
  */
 function invoke(
 	name: string,
@@ -244,27 +283,10 @@ function invoke(
 	onError: WebSocketHandler["onError"],
 	fn: () => void | Promise<void>,
 ): void {
-	const reportError = (err: unknown, kind: "threw" | "rejected"): void => {
+	settle(fn, (err, kind) => {
 		ctx.log.error(`${name} ${kind}:`, err);
-		if (!onError || name === "onError") return;
-		try {
-			const result = onError(ctx, err);
-			if (result && typeof result.then === "function") {
-				result.catch((hookErr: unknown) => ctx.log.error("onError rejected:", hookErr));
-			}
-		} catch (hookErr) {
-			ctx.log.error("onError threw:", hookErr);
-		}
-	};
-
-	try {
-		const result = fn();
-		if (result && typeof result.then === "function") {
-			result.catch((err: unknown) => reportError(err, "rejected"));
-		}
-	} catch (err) {
-		reportError(err, "threw");
-	}
+		notifyError(ctx, onError, err);
+	});
 }
 
 /**
@@ -294,7 +316,7 @@ function attachConnection(
 	const { onConnect, onMessage, onClose, onError } = loaded.handler;
 	ws.on("error", (err) => {
 		ctx.log.error("socket error:", err);
-		if (onError) invoke("onError", ctx, onError, () => onError(ctx, err));
+		notifyError(ctx, onError, err);
 	});
 
 	ctx.log.info(`connect (mode=${mode})`);
