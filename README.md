@@ -228,11 +228,11 @@ The middleware does not throttle or buffer-cap. Two `ws`-level defaults are wort
 A handler module default-exports an object implementing `WebSocketHandler` (defined in [`src/types.ts`](src/types.ts)):
 
 ```typescript
-export interface WebSocketHandler {
-	onConnect?: (ctx: WebSocketContext) => void | Promise<void>;
-	onMessage?: (ctx: WebSocketContext, message: InboundMessage) => void | Promise<void>;
-	onClose?: (ctx: WebSocketContext, code: number, reason: string) => void | Promise<void>;
-	onError?: (ctx: WebSocketContext, err: unknown) => void | Promise<void>;
+export interface WebSocketHandler<TData = Record<string, unknown>> {
+	onConnect?: (ctx: WebSocketContext<TData>) => void | Promise<void>;
+	onMessage?: (ctx: WebSocketContext<TData>, message: InboundMessage) => void | Promise<void>;
+	onClose?: (ctx: WebSocketContext<TData>, code: number, reason: string) => void | Promise<void>;
+	onError?: (ctx: WebSocketContext<TData>, err: unknown) => void | Promise<void>;
 }
 
 export type InboundMessage = string | PcpFrame;
@@ -242,6 +242,8 @@ export interface PcpFrame {
 	body: string; // raw body bytes as utf-8
 }
 ```
+
+The optional `<TData>` parameter types the per-connection `ctx.data` bag for every callback. Omit it and `ctx.data` is `Record<string, unknown>`; supply a shape to read it without a cast (see [Stateful per-connection handlers](#stateful-per-connection-handlers)).
 
 All callbacks are optional. A handler that only implements `onMessage` is valid; so is a handler that only implements `onConnect` (e.g. a periodic-push fixture that never reads inbound traffic). Frames that arrive when no `onMessage` is defined are dropped with a `verbose` log. Any callback may be `async`; the middleware awaits returned promises and logs rejections through `ctx.log.error` without closing the connection.
 
@@ -434,6 +436,51 @@ export default handler;
 
 The type parameter flows into `ctx.data` on both `mode` branches and survives narrowing, so `ctx.data` stays typed inside an `if (ctx.mode === "pcp")` block. It states what you store, not what gets populated for you: the object starts empty, so type the fields you fill in lazily as optional and write the required ones in `onConnect` before you read them. Drop the parameter and `ctx.data` is `Record<string, unknown>`, where any key writes and every read is `unknown`.
 
+The shape can be as rich as the connection needs:
+
+<details>
+<summary>Larger example: a typed session bag (identity, subscriptions, sequence)</summary>
+
+```typescript
+import type { WebSocketHandler } from "ui5-middleware-ws-mock";
+
+interface Session {
+	user: { id: string; roles: string[] };
+	subscriptions: Set<string>;
+	lastSeq: number;
+	pendingAck?: { seq: number; sentAt: number };
+}
+
+const handler: WebSocketHandler<Session> = {
+	onConnect: (ctx) => {
+		const url = new URL(ctx.req.url ?? "/", "http://localhost");
+		ctx.data.user = { id: url.searchParams.get("user") ?? "anonymous", roles: ["viewer"] };
+		ctx.data.subscriptions = new Set();
+		ctx.data.lastSeq = 0;
+		ctx.send(`WELCOME ${ctx.data.user.id}`);
+	},
+	onMessage: (ctx, message) => {
+		const body = typeof message === "string" ? message : message.body;
+		const [verb, ...rest] = body.split(":");
+		if (verb === "SUB") {
+			ctx.data.subscriptions.add(rest.join(":"));
+			ctx.data.lastSeq += 1;
+			ctx.data.pendingAck = { seq: ctx.data.lastSeq, sentAt: Date.now() };
+			ctx.send(`ACK ${ctx.data.lastSeq}`);
+		}
+	},
+	onClose: (ctx) => {
+		ctx.log.info(`closing ${ctx.data.user.id}: ${ctx.data.subscriptions.size} subscription(s)`);
+	},
+};
+
+export default handler;
+```
+
+Required fields (`user`, `subscriptions`, `lastSeq`) are set in `onConnect` and read with no cast in every later callback; `pendingAck` is optional because it is filled in only once a message arrives. The nested object, the `Set`, and the optional field all keep their types through `ctx.data`.
+
+</details>
+
 **Keeping state off the context type.** `ctx` is a stable key for the life of a connection, so a module-level `WeakMap<WebSocketContext, T>` is an equally valid home for per-connection state, and its entry drops when the connection ends. Reach for it to key state outside the context or to keep a shape off the `ctx.data` type:
 
 ```typescript
@@ -460,8 +507,12 @@ The map declaration and the `get` that the compiler types as possibly `undefined
 const subscribers = new Set<WebSocketContext>();
 
 const handler: WebSocketHandler = {
-	onConnect: (ctx) => subscribers.add(ctx),
-	onClose: (ctx) => subscribers.delete(ctx),
+	onConnect: (ctx) => {
+		subscribers.add(ctx);
+	},
+	onClose: (ctx) => {
+		subscribers.delete(ctx);
+	},
 	onMessage: (_ctx, message) => {
 		const body = typeof message === "string" ? message : message.body;
 		for (const sub of subscribers) sub.send(`event:${body}`);
