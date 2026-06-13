@@ -10,7 +10,7 @@ import {
 	createMiddlewareUtil,
 } from "./helpers/server.js";
 import { createCapturedLogger } from "./helpers/logger.js";
-import { waitForLog, waitForMessages } from "./helpers/wait.js";
+import { waitForLog, waitForMessages, waitForOpen } from "./helpers/wait.js";
 import { decode, encode } from "../src/pcp.js";
 
 vi.mock("ui5-utils-express/lib/hook.js", () => ({
@@ -79,7 +79,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		expect(ws.protocol).toBe("");
 
 		const readyMsgs = await ready;
@@ -100,7 +100,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		expect(ws.protocol).toBe("v10.pcp.sap.com");
 
 		const readyMsgs = await ready;
@@ -130,7 +130,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		await ready;
 
 		const reply = waitForMessages(ws, 1);
@@ -148,7 +148,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		await ready;
 
 		const tricky = "k:v\nline2\\back";
@@ -170,7 +170,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/typed`, "v10.pcp.sap.com");
 		const expectTwo = waitForMessages(ws, 2);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		const [helloRaw, welcomeRaw] = await expectTwo;
 		const hello = decode(helloRaw!);
@@ -209,7 +209,7 @@ describe("ws-mock middleware", () => {
 			`ws://127.0.0.1:${serverHandle.port}/ws/badfield`,
 			"v10.pcp.sap.com",
 		);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		await waitForLog(
 			args.entries,
@@ -230,7 +230,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		await ready;
 
 		// Send a frame with custom action and extra fields; verify the handler
@@ -249,7 +249,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/no-onmessage`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		ws.send("hello");
 		await waitForLog(
@@ -284,7 +284,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/cthrow`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		await waitForLog(
 			args.entries,
@@ -301,7 +301,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/sthrow`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		await waitForLog(
 			args.entries,
@@ -318,7 +318,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/aboom`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		ws.send("trigger");
 		await waitForLog(
@@ -336,7 +336,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/sboom`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		ws.send("trigger");
 		await waitForLog(
@@ -446,7 +446,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/async`);
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		expect((await ready)[0]).toBe("READY");
 
 		const echo = waitForMessages(ws, 1);
@@ -466,7 +466,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`, "v10.pcp.sap.com");
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		await ready;
 
 		// Per SapPcpWebSocket's fallback, decode of a header-less frame yields
@@ -492,7 +492,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		await ready;
 
 		const echo = waitForMessages(ws, 1);
@@ -541,14 +541,14 @@ describe("ws-mock middleware", () => {
 
 		// Route /ws/a accepts (handled by ws-mock).
 		const wsA = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/a`);
-		await new Promise<void>((resolve) => wsA.once("open", resolve));
+		await waitForOpen(wsA);
 		wsA.close();
 
 		// Route /ws/c is not declared on ws-mock. Opening it should fall
 		// through to the test-side listener, which completes the handshake
 		// and then closes cleanly.
 		const wsC = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/c`);
-		await new Promise<void>((resolve) => wsC.once("open", resolve));
+		await waitForOpen(wsC);
 		const observedPath = await fallthroughOccurred;
 		expect(observedPath).toBe("/ws/c");
 		wsC.close();
@@ -589,7 +589,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notif`);
 		const hello = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		await hello;
 		ws.close(1000, "bye");
 
@@ -606,7 +606,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notif`);
 		const hello = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		await hello;
 		const closePromise = new Promise<number>((resolve) =>
 			ws.on("close", (code) => resolve(code)),
@@ -668,7 +668,7 @@ describe("ws-mock middleware", () => {
 		// not echo.ts's READY, so observing HELLO confirms the override.
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/dup`);
 		const first = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		const messages = await first;
 		expect(messages[0]).toBe("HELLO");
 
@@ -715,7 +715,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/srcdef`);
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		expect((await ready)[0]).toBe("READY");
 
 		const echoBack = waitForMessages(ws, 1);
@@ -745,7 +745,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/rooted`);
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		expect((await ready)[0]).toBe("READY");
 
 		ws.close();
@@ -809,7 +809,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/escaped`);
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		expect((await ready)[0]).toBe("READY");
 
 		ws.close();
@@ -887,7 +887,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/no-onmessage`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		ws.send("hello");
 		await vi.waitFor(() =>
 			expect(
@@ -909,7 +909,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/oesync`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		ws.send("trigger");
 
 		await waitForLog(
@@ -931,7 +931,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/oeasync`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		ws.send("trigger");
 
 		await waitForLog(
@@ -956,7 +956,7 @@ describe("ws-mock middleware", () => {
 		// Swallow the client-side error that surfaces when the server closes the
 		// connection with 1002; an unhandled `'error'` would crash the test.
 		ws.on("error", () => {});
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		// RFC 6455 §5.1: clients MUST mask every frame. Bypass ws's masking by
 		// writing raw bytes to the underlying TCP socket: FIN=1, opcode=text(1)
@@ -992,7 +992,7 @@ describe("ws-mock middleware", () => {
 			`ws://127.0.0.1:${serverHandle.port}/ws/oeencode`,
 			"v10.pcp.sap.com",
 		);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 
 		await waitForLog(
 			args.entries,
@@ -1100,7 +1100,7 @@ describe("ws-mock middleware", () => {
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/oeloop`);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		ws.send("trigger");
 
 		await waitForLog(
@@ -1126,7 +1126,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/counter`);
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		// onConnect observed the bag the middleware created: an empty object.
 		expect((await ready)[0]).toBe("init:empty=true");
 
@@ -1147,12 +1147,12 @@ describe("ws-mock middleware", () => {
 
 		const wsA = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/counter`);
 		const readyA = waitForMessages(wsA, 1);
-		await new Promise<void>((resolve) => wsA.once("open", resolve));
+		await waitForOpen(wsA);
 		await readyA;
 
 		const wsB = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/counter`);
 		const readyB = waitForMessages(wsB, 1);
-		await new Promise<void>((resolve) => wsB.once("open", resolve));
+		await waitForOpen(wsB);
 		await readyB;
 
 		// A advances twice; B's bag must be untouched and start fresh at 1.
@@ -1176,7 +1176,7 @@ describe("ws-mock middleware", () => {
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/counter`);
 		const ready = waitForMessages(ws, 1);
-		await new Promise<void>((resolve) => ws.once("open", resolve));
+		await waitForOpen(ws);
 		await ready;
 
 		const counts = waitForMessages(ws, 2);

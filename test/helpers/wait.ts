@@ -2,6 +2,16 @@ import type { WebSocket } from "ws";
 import type { CapturedLog } from "./logger.js";
 
 /**
+ * Resolve once `ws` fires `open`. Thin wrapper over the one-shot listener so
+ * tests read `await waitForOpen(ws)` instead of inlining the Promise. Does not
+ * touch message listeners: attach any `waitForMessages` waiter BEFORE calling
+ * this, exactly as with the inlined form, so an on-connect frame is not missed.
+ */
+export function waitForOpen(ws: WebSocket): Promise<void> {
+	return new Promise((resolve) => ws.once("open", () => resolve()));
+}
+
+/**
  * Resolve once the captured-log entries array contains an entry matching the
  * predicate, or reject after `timeoutMs`. Polls every 5ms.
  */
