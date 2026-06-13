@@ -23,6 +23,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 - Loads one handler module per route at startup (TypeScript or JavaScript).
 - Forwards every inbound frame to the handler's `onMessage`. In plain mode the handler receives the raw frame string; in PCP mode it receives a decoded `{ fields, body }` object with the wire bytes preserved verbatim.
 - Provides `ctx.send(message)` for outbound writes. Plain mode writes the string verbatim. PCP mode accepts either a string (wrapped in a default `pcp-action:MESSAGE` / `pcp-body-type:text` frame) or an `EncodeOptions` object (the middleware calls `encode()` internally). The TypeScript surface narrows on `ctx.mode` so the `EncodeOptions` overload is only offered to PCP-mode call sites. For framings the public encoder does not cover, fall back to `ctx.ws.send` with a pre-built wire string.
+- Hands each connection a mutable `ctx.data` bag for per-connection handler state. The same object reaches every callback on that connection and carries the type you give it through `WebSocketHandler<TData>`.
 - Logs handler failures, malformed frames, and non-open-socket sends without crashing `ui5 serve` or the connection.
 
 ## What it does not do
@@ -412,7 +413,7 @@ The plain-mode wire shape (`ACTION:body` here) is whatever your client speaks; p
 
 ### Stateful per-connection handlers
 
-Per-connection state lives on `ctx.data`, a scratch bag the middleware creates fresh for each connection and hands to every callback. Parameterize the handler to type it; reads then need no cast:
+Keep per-connection state on `ctx.data`. The middleware builds one empty object per connection and passes that same object to every callback, so a value you write in `onConnect` is there in `onMessage`, `onClose`, and `onError`. It is discarded when the connection ends. Type the bag by parameterizing the handler with the shape you store, and reads need no cast:
 
 ```typescript
 import type { WebSocketHandler } from "ui5-middleware-ws-mock";
@@ -431,26 +432,27 @@ const handler: WebSocketHandler<{ count: number }> = {
 export default handler;
 ```
 
-`ctx.data` starts as an empty object and is the same reference in `onConnect`, `onMessage`, `onClose`, and `onError`; it is collected when the connection's context is. The type argument is an assertion about what you put in the bag (nothing is populated for you), so declare lazily-set fields optional and set required ones in `onConnect` before reading them. The type is preserved when you narrow on `ctx.mode`, so `ctx.data` stays typed inside an `if (ctx.mode === "pcp")` branch. Without a type argument `ctx.data` is `Record<string, unknown>`: writes take any key, reads come back `unknown`.
+The type parameter flows into `ctx.data` on both `mode` branches and survives narrowing, so `ctx.data` stays typed inside an `if (ctx.mode === "pcp")` block. It states what you store, not what gets populated for you: the object starts empty, so type the fields you fill in lazily as optional and write the required ones in `onConnect` before you read them. Drop the parameter and `ctx.data` is `Record<string, unknown>`, where any key writes and every read is `unknown`.
 
-If you would rather key state externally (or keep state off the public context), a `WeakMap<WebSocketContext, State>` works too and is collected on the same schedule:
+**Keeping state off the context type.** `ctx` is a stable key for the life of a connection, so a module-level `WeakMap<WebSocketContext, T>` is an equally valid home for per-connection state, and its entry drops when the connection ends. Reach for it to key state outside the context or to keep a shape off the `ctx.data` type:
 
 ```typescript
-const state = new WeakMap<WebSocketContext, { count: number }>();
+const counters = new WeakMap<WebSocketContext, { count: number }>();
 
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
-		state.set(ctx, { count: 0 });
+		counters.set(ctx, { count: 0 });
 		ctx.send("HELLO");
 	},
 	onMessage: (ctx) => {
-		const s = state.get(ctx);
-		if (!s) return;
-		s.count += 1;
-		ctx.send(`count=${s.count}`);
+		const counter = counters.get(ctx)!;
+		counter.count += 1;
+		ctx.send(`count=${counter.count}`);
 	},
 };
 ```
+
+The map declaration and the `get` that the compiler types as possibly `undefined` are the boilerplate `ctx.data` does without. Both free the state when the connection ends.
 
 ### Shared state across connections
 
