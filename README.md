@@ -710,6 +710,8 @@ The cost is the coupling to the hook trick. A future UI5 tooling major bump that
 
 **The client disconnects with code 1011.** The handler module failed to load (syntax error, missing default export, import that threw). The middleware accepts the upgrade then closes with `1011 Internal Server Error`; the failure is also logged at server start with the absolute file path the middleware tried to import. Fix the module and restart the server.
 
+**A parametrized route never connects, or the wrong route answers.** Two common causes. (1) The pattern failed to compile — `path-to-regexp` v8 rejects the legacy `:opt?` and bare `*` forms (use `{/:opt}` and `*name`); look for `invalid mountPath pattern; route disabled` in the startup log. (2) A broader route declared earlier is shadowing it — matching is first-match-wins in declaration order, so list specific patterns before catch-alls (`/ws/exact` before `/ws/:kind`). See [Parametrized mount paths](#parametrized-mount-paths).
+
 **The client disconnects with code 1006.** This is the "no close frame received" code, emitted by the client when the TCP connection drops without a clean WebSocket close. Most often: the server process exited (handler `throw` that wasn't caught; almost everything inside the middleware is caught, but raw `ctx.ws.on(...)` listeners on the underlying socket are the handler's own to guard), or `ctx.terminate()` was called.
 
 **The client offers a subprotocol and the handshake fails.** Only `v10.pcp.sap.com` is recognized. Any other offered subprotocol receives no echo from the server; per RFC 6455 §4.2.2 the client fails its own handshake. Plain `WebSocket` clients that offer no subprotocol succeed and run in plain mode.
