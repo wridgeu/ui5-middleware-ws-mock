@@ -482,6 +482,21 @@ const handler: WebSocketHandler = {
 };
 ```
 
+### Mocking SAP APC scenarios (stateful vs stateless)
+
+SAP's ABAP Push Channel (APC) is the WebSocket server in AS ABAP, and PCP, the subprotocol this middleware speaks, is how it frames messages. APC handlers come in two flavors, and each maps onto a pattern above.
+
+**Stateful APC** keeps per-connection memory: "the context and, more specifically, the attributes of the APC handler are preserved each time the server is accessed by a client", and the handler runs in a non-blocking model. It has been selectable since AS ABAP 7.50. Mock it with [`ctx.data`](#stateful-per-connection-handlers) or the WeakMap escape hatch. Your handler already holds that state across messages, and the Node event loop is non-blocking by default, so this is the direct fit.
+
+**Stateless APC** is the default: each inbound message runs in its own session and the handler retains no attributes between messages, so per-connection state lives in shared-memory objects, the database, or an [ABAP Messaging Channel (AMC)](https://help.sap.com/doc/abapdocu_755_index_htm/7.55/en-US/abenamc.htm). AMC is a publish/subscribe framework between ABAP sessions; an APC connection binds to a channel as a consumer, so a session that publishes to the channel has its message pushed to every subscribed WebSocket client. Reproduce that fan-out with [Shared state across connections](#shared-state-across-connections) and [Periodic push](#periodic-push): hold the state outside the connection and broadcast to the subscriber set.
+
+The middleware enforces neither flavor. It runs in a single `ui5 serve` process with no session roll-out and no work-process pool, so the distinction is server-side behavior you express in the handler, not anything negotiated on the wire. The PCP framing is identical for both, so the choice does not change what a `sap.ui.core.ws.SapPcpWebSocket` client sees. Pick the pattern that matches the backend you stand in for.
+
+**References:**
+
+- [APC, ABAP Push Channels (ABAP Keyword Documentation)](https://help.sap.com/doc/abapdocu_755_index_htm/7.55/en-US/abenapc.htm)
+- [AMC, ABAP Messaging Channels (ABAP Keyword Documentation)](https://help.sap.com/doc/abapdocu_755_index_htm/7.55/en-US/abenamc.htm)
+
 ### Simulating backend latency
 
 ```typescript
