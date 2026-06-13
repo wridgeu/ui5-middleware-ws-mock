@@ -798,6 +798,29 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 				String(e.args.join(" ")).includes("invalid mountPath pattern"),
 		);
 		expect(disabled).toBeDefined();
+
+		// ...and at upgrade time the disabled route is skipped by matchRoute, so
+		// a connection falls through to other middleware rather than being claimed
+		// (or crashing). A coexisting listener stands in for that other middleware.
+		const fallthroughWss = new WebSocketServer({ noServer: true });
+		let fallthroughResolve: ((path: string) => void) | null = null;
+		const fallthroughOccurred = new Promise<string>((resolve) => {
+			fallthroughResolve = resolve;
+		});
+		serverHandle.server.on("upgrade", (req, socket, head) => {
+			const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+			if (pathname !== "/ws/anything") return;
+			fallthroughWss.handleUpgrade(req, socket, head, (ws) => {
+				fallthroughResolve?.(pathname);
+				ws.close();
+			});
+		});
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/anything`);
+		await waitForOpen(ws);
+		expect(await fallthroughOccurred).toBe("/ws/anything");
+		ws.close();
+		fallthroughWss.close();
 	});
 });
 
@@ -1381,5 +1404,97 @@ describe("ws-mock middleware: ctx.data bag", () => {
 			args.entries,
 			(e) => e.level === "info" && String(e.args.join(" ")).includes("final count=2"),
 		);
+	});
+});
+
+describe("ws-mock middleware: defensive paths (non-feature)", () => {
+	it("a synchronous ws.close throw is caught and logged at warn (connection survives)", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/close-throws.ts", "/ws/cthrow");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/cthrow`);
+		ws.on("error", () => {});
+		await waitForOpen(ws);
+
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "warn" && String(e.args.join(" ")).includes("ws.close threw"),
+		);
+
+		ws.terminate();
+	});
+
+	it("a synchronous ws.terminate throw is caught and logged at warn", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/terminate-throws.ts", "/ws/tthrow");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/tthrow`);
+		ws.on("error", () => {});
+		await waitForOpen(ws);
+
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "warn" && String(e.args.join(" ")).includes("ws.terminate threw"),
+		);
+
+		ws.terminate();
+	});
+
+	it("inbound ArrayBuffer frames are normalized to utf-8 (binaryType=arraybuffer)", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo-binarytype.ts", "/ws/bin");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/bin?bt=arraybuffer`);
+		await waitForOpen(ws);
+		const echo = waitForMessages(ws, 1);
+		ws.send(Buffer.from("héllo", "utf8"));
+		expect((await echo)[0]).toBe("ECHO:héllo");
+
+		ws.close();
+	});
+
+	it("inbound fragmented (Buffer[]) frames are normalized to utf-8 (binaryType=fragments)", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo-binarytype.ts", "/ws/bin");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/bin?bt=fragments`);
+		await waitForOpen(ws);
+		const echo = waitForMessages(ws, 1);
+		ws.send(Buffer.from("héllo", "utf8"));
+		expect((await echo)[0]).toBe("ECHO:héllo");
+
+		ws.close();
+	});
+
+	it("the scoped logger forwards every level to the host logger with the route prefix", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/log-levels.ts", "/ws/loglevels");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/loglevels`);
+		await waitForOpen(ws);
+
+		const prefix = "[ws-mock:/ws/loglevels]";
+		// silly and perf have no other call site in the middleware; assert all six
+		// levels reach the host logger and carry the route prefix as the first arg.
+		for (const [level, line] of [
+			["silly", "silly-line"],
+			["perf", "perf-line"],
+			["verbose", "verbose-line"],
+			["info", "info-line"],
+			["warn", "warn-line"],
+			["error", "error-line"],
+		] as const) {
+			await waitForLog(
+				args.entries,
+				(e) => e.level === level && e.args[0] === prefix && e.args.includes(line),
+			);
+		}
+
+		ws.close();
 	});
 });
