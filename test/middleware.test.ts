@@ -30,32 +30,35 @@ const { default: wsMock } = await import("../src/middleware.js");
 
 const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 
-describe("ws-mock middleware", () => {
-	let serverHandle: Awaited<ReturnType<typeof startServer>>;
+// Setup is file-scoped so every `describe` module below shares one server
+// lifecycle and the `buildFactoryArgs` helper. The modules are siblings (not
+// nested) to keep each `it` at its current indentation.
+let serverHandle: Awaited<ReturnType<typeof startServer>>;
 
-	beforeEach(async () => {
-		resetHookCapture();
-		serverHandle = await startServer();
-	});
+beforeEach(async () => {
+	resetHookCapture();
+	serverHandle = await startServer();
+});
 
-	afterEach(async () => {
-		await serverHandle.close();
-	});
+afterEach(async () => {
+	await serverHandle.close();
+});
 
-	function buildFactoryArgs(handlerRelative: string, mountPath: string) {
-		const { log, entries } = createCapturedLogger();
-		return {
-			log,
-			entries,
-			options: {
-				configuration: {
-					routes: [{ mountPath, handler: handlerRelative }],
-				},
+function buildFactoryArgs(handlerRelative: string, mountPath: string) {
+	const { log, entries } = createCapturedLogger();
+	return {
+		log,
+		entries,
+		options: {
+			configuration: {
+				routes: [{ mountPath, handler: handlerRelative }],
 			},
-			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
-		};
-	}
+		},
+		middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+	};
+}
 
+describe("ws-mock middleware: wire layer (plain and PCP)", () => {
 	it("reports handler load and listens on the mountPath", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
@@ -242,7 +245,9 @@ describe("ws-mock middleware", () => {
 
 		ws.close();
 	});
+});
 
+describe("ws-mock middleware: handler resilience and inbound handling", () => {
 	it("drops frames silently when no onMessage is defined", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/no-onmessage.ts", "/ws/no-onmessage");
 		await wsMock(args);
@@ -501,7 +506,9 @@ describe("ws-mock middleware", () => {
 
 		ws.close();
 	});
+});
 
+describe("ws-mock middleware: routing, negotiation, and lifecycle", () => {
 	it("isolates routes by mountPath and lets unrelated upgrades fall through", async () => {
 		const { log, entries } = createCapturedLogger();
 		await wsMock({
@@ -620,7 +627,9 @@ describe("ws-mock middleware", () => {
 			(e) => e.level === "info" && String(e.args.join(" ")).includes("disconnect 1006"),
 		);
 	});
+});
 
+describe("ws-mock middleware: configuration and handler resolution", () => {
 	it("warns when no routes are configured", async () => {
 		const { log, entries } = createCapturedLogger();
 		await wsMock({
@@ -839,7 +848,9 @@ describe("ws-mock middleware", () => {
 		).resolves.toBeDefined();
 		expect(getSourcePath).not.toHaveBeenCalled();
 	});
+});
 
+describe("ws-mock middleware: logging and error notification", () => {
 	it("ctx.log.verbose invokes the host logger's verbose method with the correct `this`", async () => {
 		const calls: { level: string; args: unknown[]; this: unknown }[] = [];
 		class ClassLogger {
@@ -1118,7 +1129,9 @@ describe("ws-mock middleware", () => {
 
 		ws.close();
 	});
+});
 
+describe("ws-mock middleware: ctx.data bag", () => {
 	it("ctx.data starts empty and persists across onConnect and onMessage frames", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/counter-data.ts", "/ws/counter");
 		await wsMock(args);
