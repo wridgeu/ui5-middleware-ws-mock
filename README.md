@@ -21,6 +21,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 - Listens for HTTP upgrade requests on the paths declared in `ui5.yaml`.
 - Negotiates the PCP v1.0 subprotocol when the client offers it; otherwise runs in plain WebSocket mode. Handlers see `ctx.mode` and branch on it where needed.
 - Loads one handler module per route at startup (TypeScript or JavaScript).
+- Matches each `mountPath` with `path-to-regexp` (the matcher Express 5 uses), so routes may carry named parameters (`/ws/notifications/:userId`), optional segments, and wildcards. Extracted, percent-decoded values are surfaced on `ctx.params`. See [Parametrized mount paths](#parametrized-mount-paths).
 - Forwards every inbound frame to the handler's `onMessage`. In plain mode the handler receives the raw frame string; in PCP mode it receives a decoded `{ fields, body }` object with the wire bytes preserved verbatim.
 - Provides `ctx.send(message)` for outbound writes. Plain mode writes the string verbatim. PCP mode accepts either a string (wrapped in a default `pcp-action:MESSAGE` / `pcp-body-type:text` frame) or an `EncodeOptions` object (the middleware calls `encode()` internally). The TypeScript surface narrows on `ctx.mode` so the `EncodeOptions` overload is only offered to PCP-mode call sites. For framings the public encoder does not cover, fall back to `ctx.ws.send` with a pre-built wire string.
 - Hands each connection a mutable `ctx.data` bag for per-connection handler state. The same object reaches every callback on that connection and carries the type you give it through `WebSocketHandler<TData>`.
@@ -30,7 +31,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 
 - Does not expose an arbitrary Express middleware. HTTP-level middleware should be registered as a separate `customMiddleware` entry.
 - Does not support multiple handler modules per route. Each route resolves to exactly one handler file. Composition belongs inside the handler module.
-- Does not support dynamic or parametrized mount paths. `mountPath` is matched against the request pathname literally. UI5-style route patterns with optional or mandatory parameters (`{param}`, `:optional?`, etc.) are not supported. Per-resource routing should be derived from `req.url` inside the handler.
+- Does not speak UI5's client-side hash-routing syntax. `mountPath` matches the server-side upgrade-request pathname, not a UI5 `manifest.json` route hash, so it uses `path-to-regexp` (Express) syntax (`:param`, `{...}`, `*splat`), not crossroads.js syntax (`{param}`, `:optional:`, `*rest*`). See [Parametrized mount paths](#parametrized-mount-paths).
 - Does not persist state across server restarts.
 - Does not impose a payload contract. Named-message dispatch ("action routing"), JSON envelopes, and any other application-level convention are the handler's responsibility; the middleware ships nothing of the kind.
 - Does not proxy to a real backend. For proxying, use [`ui5-middleware-simpleproxy`](https://www.npmjs.com/package/ui5-middleware-simpleproxy) or `fiori-tools-proxy`.
@@ -115,7 +116,7 @@ The `configuration` block under the `customMiddleware` entry accepts:
 | -------------------- | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `rootPath`           | `string`           | no       | Override the root directory that `routes[].handler` paths resolve against. Resolved relative to the project root (the directory containing `ui5.yaml`); absolute paths are honored as-is. Defaults to the UI5 project's source path: `webapp/` for Application projects, `src/` for Library/ThemeLibrary projects (honoring any overrides under `resources.configuration.paths`). Module-type projects have no single source path, so `rootPath` is required there. |
 | `routes`             | `WebSocketRoute[]` | yes      | One entry per mount path. Each entry declares a path and the file that provides the handler module.                                                                                                                                                                                                                                                                                                                                                                 |
-| `routes[].mountPath` | `string`           | yes      | Path such as `/ws/foo`. Matched against the upgrade request pathname literally; no parameter patterns. Clients connect to `ws://<host>:<port><mountPath>`.                                                                                                                                                                                                                                                                                                          |
+| `routes[].mountPath` | `string`           | yes      | Path such as `/ws/foo`, matched against the upgrade request pathname with `path-to-regexp` (Express 5 syntax). Supports named params (`/ws/notifications/:userId`), optional segments (`/ws/feed{/:topic}`), and named wildcards (`/ws/files/*splat`). Extracted values land on [`ctx.params`](#parametrized-mount-paths). Routes match in declaration order (first-match-wins). Clients connect to `ws://<host>:<port><mountPath>`.                                |
 | `routes[].handler`   | `string`           | yes      | Path to the handler module, resolved against the effective root (see `rootPath` above). Absolute paths are honored as-is. Exactly one handler per route.                                                                                                                                                                                                                                                                                                            |
 
 ### `rootPath` resolution matrix
@@ -179,6 +180,48 @@ configuration:
         - mountPath: /ws/bar
           handler: wsmock/handlers/bar.ts
 ```
+
+### Parametrized mount paths
+
+`mountPath` is matched against the upgrade request's pathname with [`path-to-regexp`](https://github.com/pillarjs/path-to-regexp) — the same matcher Express 5 uses — so a single route can serve a family of paths and expose the variable parts on `ctx.params`.
+
+> [!NOTE]
+> This is `path-to-regexp` (Express) syntax, matched against the **server-side pathname**. It is deliberately not UI5's client-side hash-routing syntax (crossroads.js: `{param}`, `:optional:`, `*rest*`), which never reaches the server and applies to a different layer.
+
+| Pattern                        | Matches                        | `ctx.params`                 |
+| ------------------------------ | ------------------------------ | ---------------------------- |
+| `/ws/echo` (literal)           | `/ws/echo`                     | `{}`                         |
+| `/ws/notifications/:userId`    | `/ws/notifications/42`         | `{ userId: "42" }`           |
+| `/ws/feed{/:topic}` (optional) | `/ws/feed` and `/ws/feed/news` | `{}` / `{ topic: "news" }`   |
+| `/ws/files/*splat` (wildcard)  | `/ws/files/a/b/c`              | `{ splat: ["a", "b", "c"] }` |
+
+```yaml
+configuration:
+    routes:
+        - mountPath: /ws/notifications/:userId
+          handler: wsmock/handlers/notifications.ts
+```
+
+```ts
+// wsmock/handlers/notifications.ts
+import type { WebSocketHandler } from "ui5-middleware-ws-mock";
+
+const handler: WebSocketHandler = {
+	onConnect: (ctx) => {
+		// /ws/notifications/42 -> ctx.params.userId === "42"
+		ctx.send(`subscribed user ${ctx.params.userId}`);
+	},
+};
+
+export default handler;
+```
+
+Key points:
+
+- **Named parameters** (`:userId`) capture one path segment and resolve to a `string`. **Wildcards** must be named (`*splat`) and resolve to a `string[]` of the matched segments. **Optional** segments use braces (`{/:topic}`), not a trailing `?`. This is `path-to-regexp` v8 syntax; the legacy bare `*` and `:opt?` forms are rejected — a `mountPath` that fails to compile is logged at `error` on startup and that route is disabled (it never matches).
+- **Values are percent-decoded** (`/ws/u/caf%C3%A9` → `ctx.params.name === "café"`). A pathname whose encoding cannot be decoded (e.g. a stray `%ZZ`) is treated as no match and left for other middleware, with a `verbose` log line.
+- **First match wins.** Routes are tried in declaration order, so list specific patterns before broader ones (`/ws/exact` before `/ws/:kind`). A pathname that matches no route is silently passed through, exactly as a literal non-match is.
+- `ctx.params` is `{}` for a literal `mountPath`, so reading it is always safe.
 
 ## Wire layer: WebSocket and PCP
 
@@ -253,16 +296,17 @@ All callbacks are optional. A handler that only implements `onMessage` is valid;
 
 `WebSocketContext` is a discriminated union on `mode` (defined in [`src/types.ts`](src/types.ts)). Every callback receives one of the two members (`PlainWebSocketContext` or `PcpWebSocketContext`, both re-exported from the package root). TypeScript narrows the union on `ctx.mode === "pcp"` / `"plain"`, which unlocks the appropriate `send` signature:
 
-| Field       | Type                                                                                    | Description                                                                                                                                                                                                                            |
-| ----------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ws`        | `WebSocket`                                                                             | Raw `ws` instance. Required for any framing the helper methods do not cover.                                                                                                                                                           |
-| `req`       | `http.IncomingMessage`                                                                  | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                                                                                                         |
-| `mode`      | `"pcp" \| "plain"`                                                                      | Negotiated at the handshake; fixed for the lifetime of the connection. Discriminant for the union; narrow on it to interpret `message` and choose `send`.                                                                              |
-| `log`       | `WebSocketLog`                                                                          | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.                                                                                  |
-| `data`      | `TData` (default `Record<string, unknown>`)                                             | Per-connection scratch bag, shared by reference across every callback for one connection and discarded when it ends. Type it via `WebSocketHandler<TData>`. See [Stateful per-connection handlers](#stateful-per-connection-handlers). |
-| `send`      | plain: `(message: string) => void`<br>pcp: `(message: string \| EncodeOptions) => void` | Send a frame. Plain mode writes the bytes through `ws.send` unchanged. PCP mode accepts a string (wrapped in a default frame) or `EncodeOptions`. See below.                                                                           |
-| `close`     | `(code?, reason?) => void`                                                              | Close the connection with optional code (default 1000) and reason.                                                                                                                                                                     |
-| `terminate` | `() => void`                                                                            | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                                                                                                         |
+| Field       | Type                                                                                    | Description                                                                                                                                                                                                                                                     |
+| ----------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ws`        | `WebSocket`                                                                             | Raw `ws` instance. Required for any framing the helper methods do not cover.                                                                                                                                                                                    |
+| `req`       | `http.IncomingMessage`                                                                  | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                                                                                                                                  |
+| `params`    | `Record<string, string \| string[]>`                                                    | Parameters extracted from `mountPath` at upgrade time, percent-decoded. Named segments are `string`; wildcards are `string[]`; unmatched optionals are absent. Empty `{}` for a literal `mountPath`. See [Parametrized mount paths](#parametrized-mount-paths). |
+| `mode`      | `"pcp" \| "plain"`                                                                      | Negotiated at the handshake; fixed for the lifetime of the connection. Discriminant for the union; narrow on it to interpret `message` and choose `send`.                                                                                                       |
+| `log`       | `WebSocketLog`                                                                          | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.                                                                                                           |
+| `data`      | `TData` (default `Record<string, unknown>`)                                             | Per-connection scratch bag, shared by reference across every callback for one connection and discarded when it ends. Type it via `WebSocketHandler<TData>`. See [Stateful per-connection handlers](#stateful-per-connection-handlers).                          |
+| `send`      | plain: `(message: string) => void`<br>pcp: `(message: string \| EncodeOptions) => void` | Send a frame. Plain mode writes the bytes through `ws.send` unchanged. PCP mode accepts a string (wrapped in a default frame) or `EncodeOptions`. See below.                                                                                                    |
+| `close`     | `(code?, reason?) => void`                                                              | Close the connection with optional code (default 1000) and reason.                                                                                                                                                                                              |
+| `terminate` | `() => void`                                                                            | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                                                                                                                                  |
 
 Calling `ctx.send("text")` is legal in either branch because `string` is in both signatures, so call sites that do not need PCP-specific framing do not need to narrow first. Calling `ctx.send({ action: "...", body: "..." })` requires the PCP narrow.
 
@@ -655,7 +699,7 @@ The cost is the coupling to the hook trick. A future UI5 tooling major bump that
 
 - **Handler modules are imported once at server start.** Each route's handler is loaded via dynamic `import()` during `ui5 serve` startup; the module is then cached in Node's ESM loader for the process lifetime. Picking up handler edits requires a `ui5 serve` restart. A process supervisor such as `tsx watch` or `nodemon --watch <handlers-dir>` automates this. Adding the handler directory to `ui5-middleware-livereload`'s `watchPath` reloads the browser when files change but does not restart the server.
 - **One handler module per route.** No chaining or composition is performed by the middleware. Layered behavior should be composed inside the handler module.
-- **No dynamic / parametrized mount paths.** `mountPath` is matched literally against the incoming request pathname. UI5-style route patterns with optional or mandatory parameters are not supported. Per-resource routing should be derived from `req.url` (query string or path segments) inside the handler.
+- **Mount-path matching is path-only.** Patterns match the request pathname via `path-to-regexp` (see [Parametrized mount paths](#parametrized-mount-paths)). The query string is not part of matching; read it from `req.url` inside the handler. The syntax is `path-to-regexp` (Express), not UI5's client-side hash-routing syntax.
 - **Requires specVersion 3.0+** on the middleware extension to use `middlewareUtil.getProject().getRootPath()` (and `getSourcePath()`) for resolving handler paths. This middleware declares `specVersion: "4.0"`.
 
 ## Troubleshooting

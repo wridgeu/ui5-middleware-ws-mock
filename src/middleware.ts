@@ -27,12 +27,14 @@ import { pathToFileURL } from "node:url";
 import type { IncomingMessage, Server } from "node:http";
 import { Buffer } from "node:buffer";
 import { WebSocketServer, type WebSocket } from "ws";
+import { match as compilePath, type MatchFunction } from "path-to-regexp";
 // @ts-expect-error -- ui5-utils-express ships no type declarations; the module is a thin
 // server-listening hook that returns a UI5-compatible middleware factory.
 import hook from "ui5-utils-express/lib/hook.js";
 
 import type {
 	InboundMessage,
+	RouteParams,
 	WebSocketContext,
 	WebSocketHandler,
 	WebSocketLog,
@@ -48,6 +50,13 @@ interface LoadedRoute {
 	absolutePath: string;
 	handler: WebSocketHandler | null;
 	loadError?: unknown;
+	/**
+	 * `mountPath` compiled into a `path-to-regexp` matcher, or `null` if the
+	 * pattern failed to compile (`matchError` is set; the route can never match).
+	 */
+	match: MatchFunction<RouteParams> | null;
+	/** Error thrown while compiling `mountPath`, if any. */
+	matchError?: unknown;
 }
 
 interface FactoryParameters {
@@ -110,6 +119,18 @@ function resolveHandlerRoot(
  */
 async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
 	const absolutePath = resolve(handlerRoot, route.handler);
+
+	// Compile the mount path once at startup. An invalid pattern (e.g. legacy
+	// `:opt?` syntax that v8 rejects) makes `compilePath` throw; capture it so the
+	// route is disabled with a startup error instead of crashing `ui5 serve`.
+	let match: MatchFunction<RouteParams> | null = null;
+	let matchError: unknown;
+	try {
+		match = compilePath<RouteParams>(route.mountPath);
+	} catch (err) {
+		matchError = err;
+	}
+
 	try {
 		const mod = (await import(pathToFileURL(absolutePath).href)) as {
 			default?: WebSocketHandler;
@@ -119,12 +140,14 @@ async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<
 				route,
 				absolutePath,
 				handler: null,
+				match,
+				matchError,
 				loadError: new Error(`handler module ${route.handler} has no default export`),
 			};
 		}
-		return { route, absolutePath, handler: mod.default };
+		return { route, absolutePath, handler: mod.default, match, matchError };
 	} catch (loadError) {
-		return { route, absolutePath, handler: null, loadError };
+		return { route, absolutePath, handler: null, match, matchError, loadError };
 	}
 }
 
@@ -142,6 +165,7 @@ function createContext(
 	ws: WebSocket,
 	req: IncomingMessage,
 	mode: WebSocketMode,
+	params: RouteParams,
 	prefix: string,
 	baseLog: FactoryParameters["log"],
 ): WebSocketContext {
@@ -200,11 +224,11 @@ function createContext(
 				typeof message === "string" ? { body: message } : message;
 			writeRaw(encode(options));
 		};
-		return { ws, req, mode, log, data, send, close, terminate };
+		return { ws, req, mode, params, log, data, send, close, terminate };
 	}
 
 	const send = (message: string): void => writeRaw(message);
-	return { ws, req, mode, log, data, send, close, terminate };
+	return { ws, req, mode, params, log, data, send, close, terminate };
 }
 
 /**
@@ -303,6 +327,7 @@ function attachConnection(
 	ws: WebSocket,
 	req: IncomingMessage,
 	loaded: LoadedRoute,
+	params: RouteParams,
 	baseLog: FactoryParameters["log"],
 ): void {
 	const prefix = `[ws-mock:${loaded.route.mountPath}]`;
@@ -317,7 +342,7 @@ function attachConnection(
 		return;
 	}
 	const mode: WebSocketMode = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
-	const ctx = createContext(ws, req, mode, prefix, baseLog);
+	const ctx = createContext(ws, req, mode, params, prefix, baseLog);
 	const { onConnect, onMessage, onClose, onError } = loaded.handler;
 	ws.on("error", (err) => {
 		ctx.log.error("socket error:", err);
@@ -350,6 +375,37 @@ function attachConnection(
 }
 
 /**
+ * Finds the first route whose compiled `mountPath` matches `pathname`, in
+ * declaration order (first-match-wins). Returns the matched route together with
+ * the extracted, percent-decoded `params`, or `null` when nothing matches.
+ *
+ * `path-to-regexp`'s matcher decodes params with `decodeURIComponent`, which
+ * throws on malformed `%`-sequences (e.g. `%ZZ`). A throw is treated as a
+ * non-match for that route — logged at verbose — so a malformed URL never
+ * crashes the upgrade handler; matching continues with the remaining routes.
+ */
+function matchRoute(
+	routes: LoadedRoute[],
+	pathname: string,
+	log: WebSocketLog,
+): { entry: LoadedRoute; params: RouteParams } | null {
+	for (const entry of routes) {
+		if (!entry.match) continue;
+		try {
+			const result = entry.match(pathname);
+			if (result) return { entry, params: result.params };
+		} catch (err) {
+			log.verbose(
+				`[ws-mock:${entry.route.mountPath}] ignoring ${pathname}: ` +
+					`match threw (malformed percent-encoding?):`,
+				err,
+			);
+		}
+	}
+	return null;
+}
+
+/**
  * UI5 custom-middleware factory. Returns a middleware function that the
  * `ui5-utils-express/lib/hook` utility turns into a server-listening
  * callback. The returned middleware is otherwise a pass-through; WebSocket
@@ -379,7 +435,10 @@ export default async function wsMock({
 		loaded.push(...(await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)))));
 	}
 
-	const byPath = new Map<string, LoadedRoute>();
+	// Routes are matched in declaration order (first-match-wins), so keep the
+	// configured order rather than collapsing into a path-keyed map. An exact
+	// duplicate mountPath is shadowed by the earlier entry and can never match.
+	const seenPaths = new Set<string>();
 	for (const entry of loaded) {
 		const tag = `[ws-mock:${entry.route.mountPath}]`;
 		if (entry.handler) {
@@ -390,10 +449,16 @@ export default async function wsMock({
 				entry.loadError,
 			);
 		}
-		if (byPath.has(entry.route.mountPath)) {
-			log.warn(`[ws-mock] duplicate mountPath ${entry.route.mountPath}; later route wins`);
+		if (entry.matchError) {
+			log.error(`${tag} invalid mountPath pattern; route disabled:`, entry.matchError);
 		}
-		byPath.set(entry.route.mountPath, entry);
+		if (seenPaths.has(entry.route.mountPath)) {
+			log.warn(
+				`[ws-mock] duplicate mountPath ${entry.route.mountPath}; ` +
+					`earlier route wins, this entry is shadowed`,
+			);
+		}
+		seenPaths.add(entry.route.mountPath);
 	}
 
 	return hook("ui5-middleware-ws-mock", ({ server }: HookCallbackArgs) => {
@@ -438,9 +503,11 @@ export default async function wsMock({
 				log.verbose(`[ws-mock] ignoring upgrade with unparseable url=${req.url}:`, err);
 				return;
 			}
-			const entry = byPath.get(pathname);
-			if (!entry) return;
-			wss.handleUpgrade(req, socket, head, (ws) => attachConnection(ws, req, entry, log));
+			const matched = matchRoute(loaded, pathname, log);
+			if (!matched) return;
+			wss.handleUpgrade(req, socket, head, (ws) =>
+				attachConnection(ws, req, matched.entry, matched.params, log),
+			);
 		});
 
 		const mountPaths = routes.map((r) => r.mountPath).join(", ") || "(none)";

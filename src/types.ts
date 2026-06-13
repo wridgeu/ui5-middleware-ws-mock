@@ -22,6 +22,20 @@ interface WebSocketContextBase<TData = Record<string, unknown>> {
 	ws: WebSocket;
 	/** The HTTP upgrade request. Useful for `url`, `headers`, and `socket.remoteAddress`. */
 	req: IncomingMessage;
+	/**
+	 * Parameters extracted from the route's `mountPath` at upgrade time, keyed
+	 * by the parameter name declared in the pattern. Populated by the
+	 * `path-to-regexp` matcher and already percent-decoded.
+	 *
+	 *   - A named segment (`:userId`) yields a `string`.
+	 *   - A wildcard (`*splat`) yields a `string[]` of the matched segments.
+	 *   - Optional parameters that did not match are simply absent (no key).
+	 *
+	 * For a literal `mountPath` (no parameters) this is an empty object. The
+	 * same object is shared across every callback for the connection, mirroring
+	 * `ctx.data`.
+	 */
+	params: RouteParams;
 	/** Scoped logger, prefixed with `[ws-mock:<mountPath>]`. */
 	log: WebSocketLog;
 	/**
@@ -221,9 +235,33 @@ export interface WebSocketHandler<TData = Record<string, unknown>> {
 	onError?: (ctx: WebSocketContext<TData>, err: unknown) => void | Promise<void>;
 }
 
+/**
+ * Parameters extracted from a route's `mountPath`, exposed on `ctx.params`.
+ * Named segments resolve to a `string`; wildcards (`*name`) resolve to a
+ * `string[]`. Values are already percent-decoded. See `WebSocketRoute.mountPath`
+ * for the supported pattern syntax.
+ */
+export type RouteParams = Record<string, string | string[]>;
+
 /** Shape of a single entry in the middleware's `configuration.routes` list. */
 export interface WebSocketRoute {
-	/** Express-style mount path, e.g. `/ws/foo`. */
+	/**
+	 * Mount path matched against the incoming upgrade request's pathname. Accepts
+	 * `path-to-regexp` v8 syntax (the same matcher Express 5 uses):
+	 *
+	 *   - Literal: `/ws/foo` (matches that pathname, trailing slash optional).
+	 *   - Named parameter: `/ws/notifications/:userId` (one path segment, surfaced
+	 *     on `ctx.params.userId`).
+	 *   - Optional segment via braces: `/ws/feed{/:topic}` (`:topic` may be absent).
+	 *   - Wildcard: `/ws/*splat` (matches one or more segments; `ctx.params.splat`
+	 *     is a `string[]`). Combine with braces for zero-or-more: `/ws{/*splat}`.
+	 *
+	 * Note the v8 syntax: there is no bare `*` and no trailing `?`; wildcards must
+	 * be named and optionality is expressed with `{...}`. Routes are matched in
+	 * declaration order and the first match wins, so list more specific patterns
+	 * before broader ones. A pathname that matches no route is left for other
+	 * middleware to handle.
+	 */
 	mountPath: string;
 	/**
 	 * Path to the handler module, resolved against the middleware's effective

@@ -629,6 +629,178 @@ describe("ws-mock middleware: routing, negotiation, and lifecycle", () => {
 	});
 });
 
+describe("ws-mock middleware: parametrized mount paths", () => {
+	// Builds factory args for a single parametrized route backed by the
+	// params-echo fixture, which sends `JSON.stringify(ctx.params)` on connect.
+	function paramsRoute(mountPath: string) {
+		const { log, entries } = createCapturedLogger();
+		return {
+			log,
+			entries,
+			options: {
+				configuration: {
+					routes: [{ mountPath, handler: "test/fixtures/handlers/params-echo.ts" }],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		};
+	}
+
+	// Connects, reads the single connect frame, and returns the parsed params.
+	async function connectAndReadParams(path: string): Promise<Record<string, string | string[]>> {
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}${path}`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		const [raw] = await ready;
+		ws.close();
+		return JSON.parse(raw!) as Record<string, string | string[]>;
+	}
+
+	it("a literal mountPath still matches and yields empty params", async () => {
+		const args = paramsRoute("/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		expect(await connectAndReadParams("/ws/echo")).toEqual({});
+	});
+
+	it("a single named parameter is extracted onto ctx.params", async () => {
+		const args = paramsRoute("/ws/notifications/:userId");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		expect(await connectAndReadParams("/ws/notifications/42")).toEqual({ userId: "42" });
+	});
+
+	it("percent-encoded parameter values are decoded", async () => {
+		const args = paramsRoute("/ws/u/:name");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		// %C3%A9 -> é; the matcher decodes via decodeURIComponent.
+		expect(await connectAndReadParams("/ws/u/caf%C3%A9")).toEqual({ name: "café" });
+	});
+
+	it("an optional segment is present when supplied and absent otherwise", async () => {
+		const args = paramsRoute("/ws/feed{/:topic}");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		expect(await connectAndReadParams("/ws/feed/news")).toEqual({ topic: "news" });
+		expect(await connectAndReadParams("/ws/feed")).toEqual({});
+	});
+
+	it("a named wildcard captures the remaining segments as a string array", async () => {
+		const args = paramsRoute("/ws/files/*splat");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		expect(await connectAndReadParams("/ws/files/a/b/c")).toEqual({ splat: ["a", "b", "c"] });
+	});
+
+	it("routes match in declaration order: an earlier parametrized route shadows a later literal one", async () => {
+		// Declaration order: the parametrized `/ws/:kind` precedes the literal
+		// `/ws/exact`. First-match-wins means a request for `/ws/exact` is served
+		// by the parametrized route (params { kind: "exact" }), not the literal
+		// one (whose echo handler would have replied READY).
+		const { log } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{
+							mountPath: "/ws/:kind",
+							handler: "test/fixtures/handlers/params-echo.ts",
+						},
+						{ mountPath: "/ws/exact", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/exact`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		const [raw] = await ready;
+		expect(JSON.parse(raw!)).toEqual({ kind: "exact" });
+
+		ws.close();
+	});
+
+	it("a pathname matching no route is left for other middleware (silent pass-through)", async () => {
+		const args = paramsRoute("/ws/notifications/:userId");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		// A coexisting upgrade listener (stand-in for another middleware) that
+		// completes the handshake for the unmatched path. If ws-mock falls
+		// through cleanly, this listener observes the upgrade.
+		const fallthroughWss = new WebSocketServer({ noServer: true });
+		let fallthroughResolve: ((path: string) => void) | null = null;
+		const fallthroughOccurred = new Promise<string>((resolve) => {
+			fallthroughResolve = resolve;
+		});
+		serverHandle.server.on("upgrade", (req, socket, head) => {
+			const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+			if (pathname !== "/ws/unrelated") return;
+			fallthroughWss.handleUpgrade(req, socket, head, (ws) => {
+				fallthroughResolve?.(pathname);
+				ws.close();
+			});
+		});
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/unrelated`);
+		await waitForOpen(ws);
+		expect(await fallthroughOccurred).toBe("/ws/unrelated");
+		ws.close();
+		fallthroughWss.close();
+	});
+
+	it("a malformed percent-encoded pathname is skipped without crashing (logs verbose, falls through)", async () => {
+		const args = paramsRoute("/ws/u/:name");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		// ws-mock falls through on the unmatched (malformed) path, leaving the
+		// socket half-open. A trailing upgrade listener destroys it so the
+		// server can close cleanly in afterEach; it runs after ws-mock's listener.
+		serverHandle.server.on("upgrade", (req, socket) => {
+			if ((req.url ?? "").includes("%ZZ")) socket.destroy();
+		});
+
+		// `%ZZ` is an invalid escape; the matcher's decodeURIComponent throws.
+		// matchRoute swallows it, logs at verbose, and returns no match.
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/u/%ZZ`);
+		ws.on("error", () => {});
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "verbose" &&
+				String(e.args.join(" ")).includes("malformed percent-encoding"),
+		);
+	});
+
+	it("an invalid mountPath pattern is disabled at startup with an error log and never matches", async () => {
+		// Legacy `:opt?` syntax is rejected by path-to-regexp v8 (optionality is
+		// `{...}`). The route compiles to null, is logged at error, and the
+		// factory still resolves; the handler itself loads fine.
+		const args = paramsRoute("/ws/:bad?");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const disabled = args.entries.find(
+			(e) =>
+				e.level === "error" &&
+				String(e.args.join(" ")).includes("invalid mountPath pattern"),
+		);
+		expect(disabled).toBeDefined();
+	});
+});
+
 describe("ws-mock middleware: configuration and handler resolution", () => {
 	it("warns when no routes are configured", async () => {
 		const { log, entries } = createCapturedLogger();
@@ -649,17 +821,20 @@ describe("ws-mock middleware: configuration and handler resolution", () => {
 		expect(listening).toBeDefined();
 	});
 
-	it("warns when duplicate mountPaths are declared and the later route wins", async () => {
+	it("warns when duplicate mountPaths are declared and the earlier route wins (first-match-wins)", async () => {
 		const { log, entries } = createCapturedLogger();
 		await wsMock({
 			log,
 			options: {
 				configuration: {
 					routes: [
-						{ mountPath: "/ws/dup", handler: "test/fixtures/handlers/echo.ts" },
 						{
 							mountPath: "/ws/dup",
 							handler: "test/fixtures/handlers/notifications.ts",
+						},
+						{
+							mountPath: "/ws/dup",
+							handler: "test/fixtures/handlers/echo.ts",
 						},
 					],
 				},
@@ -673,8 +848,10 @@ describe("ws-mock middleware: configuration and handler resolution", () => {
 		);
 		expect(warning).toBeDefined();
 
-		// The later route (notifications.ts) wins. Its onConnect sends HELLO,
-		// not echo.ts's READY, so observing HELLO confirms the override.
+		// Routes match in declaration order, first-match-wins, so the earlier
+		// route (notifications.ts) wins and the later echo.ts entry is shadowed.
+		// notifications.ts's onConnect sends HELLO, not echo.ts's READY, so
+		// observing HELLO confirms the earlier route serviced the connection.
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/dup`);
 		const first = waitForMessages(ws, 1);
 		await waitForOpen(ws);
