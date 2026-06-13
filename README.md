@@ -287,7 +287,7 @@ The middleware does not interpret the bytes:
 - **PCP mode, string.** `message` is wrapped in a default PCP frame (`pcp-action:MESSAGE`, `pcp-body-type:text`, no extra header fields) with `message` as the body.
 - **PCP mode, `EncodeOptions`.** The middleware calls `encode(message)` internally and writes the resulting wire string. `EncodeOptions` is re-exported from the package root.
 
-`ctx.send` never throws; failure cases (closed socket, `ws.send` throw, `encode()` throw on an empty PCP field name) are summarized in [Error handling](#error-handling).
+`ctx.send` swallows closed-socket and `ws.send` failures (logged, never thrown). The one case it does not swallow is the PCP `EncodeOptions` empty-field-name `encode()` throw, which propagates to the handler-invocation wrapper. All cases are summarized in [Error handling](#error-handling).
 
 For binary payloads, base64-encode the bytes and pass `bodyType: "binary"`:
 

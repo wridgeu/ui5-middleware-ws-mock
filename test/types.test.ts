@@ -10,10 +10,12 @@ import type {
 
 /**
  * Type-level regression tests for the discriminated `ctx.send` surface and
- * the single-mode narrowing patterns documented in the README. These checks
- * run under `npm test` (Vitest evaluates the file) and under
- * `npm run typecheck` (`tsc --noEmit` covers the test tree). Either gate is
- * sufficient to catch a contract regression; running both is belt + braces.
+ * the single-mode narrowing patterns documented in the README. The assertions
+ * live in the types and are enforced only by `npm run typecheck` (`tsc
+ * --noEmit` covers the test tree, including this file). `vitest run` executes
+ * the file but does not type-check it, so the `expectTypeOf` calls are runtime
+ * no-ops; a broken contract would stay green under `npm test` alone. CI
+ * guards the contract because `npm run check` runs the typecheck gate.
  *
  * The runtime `it()` bodies are no-ops; the assertions live in the types.
  */
