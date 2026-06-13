@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.3.2...v0.4.0) (2026-06-13)
+
+
+### Features
+
+* **types:** add a typed per-connection ctx.data bag ([473a118](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/473a11874c980352f129c2eafa53a4932d60fafc))
+
+
+### Code Refactoring
+
+* **middleware:** split invoke into settle and notifyError ([b06ceb4](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/b06ceb4af0e69e29e7bd6852a4ffc1ede36f5eb4))
+* **test:** extract waitForOpen helper for the open-await idiom ([18c6f1a](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/18c6f1a9dfe5f82ca45a50aa816d8f9b494cfea9))
+
 ## [0.3.2](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.3.1...v0.3.2) (2026-05-15)
 
 
