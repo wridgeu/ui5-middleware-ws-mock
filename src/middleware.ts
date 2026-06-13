@@ -185,6 +185,11 @@ function createContext(
 		}
 	};
 
+	// Per-connection scratch bag. One object per `createContext` call (one per
+	// connection), shared by reference across every callback for this socket.
+	// Typed loosely here; the handler narrows it via `WebSocketHandler<TData>`.
+	const data: Record<string, unknown> = {};
+
 	if (mode === "pcp") {
 		// `encode()` only throws on empty field names. The string overload
 		// cannot produce that; the `EncodeOptions` overload can, but the throw
@@ -195,11 +200,11 @@ function createContext(
 				typeof message === "string" ? { body: message } : message;
 			writeRaw(encode(options));
 		};
-		return { ws, req, mode, log, send, close, terminate };
+		return { ws, req, mode, log, data, send, close, terminate };
 	}
 
 	const send = (message: string): void => writeRaw(message);
-	return { ws, req, mode, log, send, close, terminate };
+	return { ws, req, mode, log, data, send, close, terminate };
 }
 
 /**
