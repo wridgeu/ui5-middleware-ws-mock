@@ -221,6 +221,7 @@ Key points:
 - **Named parameters** (`:userId`) capture one path segment and resolve to a `string`. **Wildcards** must be named (`*splat`) and resolve to a `string[]` of the matched segments. **Optional** segments use braces (`{/:topic}`), not a trailing `?`. This is `path-to-regexp` v8 syntax; the legacy bare `*` and `:opt?` forms are rejected — a `mountPath` that fails to compile is logged at `error` on startup and that route is disabled (it never matches).
 - **Values are percent-decoded** (`/ws/u/caf%C3%A9` → `ctx.params.name === "café"`). A pathname whose encoding cannot be decoded (e.g. a stray `%ZZ`) is treated as no match and left for other middleware, with a `verbose` log line.
 - **First match wins.** Routes are tried in declaration order, so list specific patterns before broader ones (`/ws/exact` before `/ws/:kind`). A pathname that matches no route is silently passed through, exactly as a literal non-match is.
+- **Startup warnings.** At startup the middleware inspects the route table and warns (without disabling the route) about three otherwise-silent mistakes: a route shadowed by an earlier pattern (unreachable under first-match-wins), a `mountPath` with no leading static segment (it matches from the URL root and steals upgrades from other middleware such as livereload), and a duplicate parameter name (only the last occurrence is captured). The matched pathname and extracted params are also logged on each `connect` line.
 - `ctx.params` is `{}` for a literal `mountPath`, so reading it is always safe.
 
 ## Wire layer: WebSocket and PCP
@@ -681,6 +682,8 @@ Two independent concerns:
 
 The middleware follows this pattern. Other libraries that hook `"upgrade"` on the same server coexist without interference.
 
+This coexistence depends on every `mountPath` carrying a leading static segment (`/ws/...`). A pattern with no static prefix (`/{*splat}`, `/:anything`) matches every upgrade path from the URL root, so it claims requests meant for other listeners (livereload's WS channel, for example). The middleware warns about such a pattern at startup but does not refuse it; scope each route under a literal prefix.
+
 ### The tricks, named
 
 - **Mount event capture.** Express's public API fires `"mount"` on a sub-app as part of `app.use(subApp)`. Any object with `handle`, `set`, and `emit` methods is accepted as a sub-app. The hook returns exactly that shape and receives the parent `app` reference for free.
@@ -710,7 +713,7 @@ The cost is the coupling to the hook trick. A future UI5 tooling major bump that
 
 **The client disconnects with code 1011.** The handler module failed to load (syntax error, missing default export, import that threw). The middleware accepts the upgrade then closes with `1011 Internal Server Error`; the failure is also logged at server start with the absolute file path the middleware tried to import. Fix the module and restart the server.
 
-**A parametrized route never connects, or the wrong route answers.** Two common causes. (1) The pattern failed to compile — `path-to-regexp` v8 rejects the legacy `:opt?` and bare `*` forms (use `{/:opt}` and `*name`); look for `invalid mountPath pattern; route disabled` in the startup log. (2) A broader route declared earlier is shadowing it — matching is first-match-wins in declaration order, so list specific patterns before catch-alls (`/ws/exact` before `/ws/:kind`). See [Parametrized mount paths](#parametrized-mount-paths).
+**A parametrized route never connects, or the wrong route answers.** Common causes, each flagged in the startup log: (1) the pattern failed to compile (`path-to-regexp` v8 rejects the legacy `:opt?` and bare `*` forms; use `{/:opt}` and `*name`), shown as `invalid mountPath pattern; route disabled`; (2) a broader route declared earlier shadows it (matching is first-match-wins, so list specific patterns before catch-alls, `/ws/exact` before `/ws/:kind`), shown as `mountPath is unreachable`; (3) the pattern has a duplicate parameter name, so only the last value survives, shown as `duplicate parameter name(s)`. The per-connection `connect` line also prints the matched pathname and params, so you can confirm which route answered. See [Parametrized mount paths](#parametrized-mount-paths).
 
 **The client disconnects with code 1006.** This is the "no close frame received" code, emitted by the client when the TCP connection drops without a clean WebSocket close. Most often: the server process exited (handler `throw` that wasn't caught; almost everything inside the middleware is caught, but raw `ctx.ws.on(...)` listeners on the underlying socket are the handler's own to guard), or `ctx.terminate()` was called.
 

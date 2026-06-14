@@ -822,6 +822,155 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 		ws.close();
 		fallthroughWss.close();
 	});
+
+	it("logs the matched pathname and extracted params on the connect line", async () => {
+		const args = paramsRoute("/ws/notifications/:userId");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/notifications/42`);
+		await waitForOpen(ws);
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "info" &&
+				String(e.args.join(" ")).includes("connect") &&
+				String(e.args.join(" ")).includes("path=/ws/notifications/42") &&
+				String(e.args.join(" ")).includes(`"userId":"42"`),
+		);
+
+		ws.close();
+	});
+
+	it("omits the params suffix from the connect line for a literal route", async () => {
+		// A literal mountPath yields empty params, so the connect line carries the
+		// path but no `params=` noise.
+		const args = paramsRoute("/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		await waitForOpen(ws);
+
+		await waitForLog(
+			args.entries,
+			(e) =>
+				e.level === "info" &&
+				String(e.args.join(" ")).includes("connect (mode=") &&
+				String(e.args.join(" ")).includes("path=/ws/echo"),
+		);
+		const connectLine = args.entries.find(
+			(e) => e.level === "info" && String(e.args.join(" ")).includes("connect (mode="),
+		);
+		expect(String(connectLine?.args.join(" "))).not.toContain("params=");
+
+		ws.close();
+	});
+
+	it("warns that a mountPath without a static prefix breaks coexistence", async () => {
+		// `/{*splat}` matches every upgrade path from the root, so it would claim
+		// upgrades meant for other listeners (livereload). The scoped route is
+		// declared first so the catch-all (last) does not also trip the shadow
+		// warning, isolating the prefix check to exactly one entry.
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{ mountPath: "/ws/scoped", handler: "test/fixtures/handlers/echo.ts" },
+						{ mountPath: "/{*splat}", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+
+		const warned = entries.filter(
+			(e) =>
+				e.level === "warn" &&
+				String(e.args.join(" ")).includes("no leading static segment"),
+		);
+		expect(warned).toHaveLength(1);
+		expect(String(warned[0]!.args.join(" "))).toContain("[ws-mock:/{*splat}]");
+	});
+
+	it("warns that a route shadowed by an earlier pattern is unreachable", async () => {
+		// Declaration order puts the broad `/ws/:kind` before the specific
+		// `/ws/exact`; first-match-wins makes the literal route dead.
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{
+							mountPath: "/ws/:kind",
+							handler: "test/fixtures/handlers/params-echo.ts",
+						},
+						{ mountPath: "/ws/exact", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+
+		const shadow = entries.find(
+			(e) =>
+				e.level === "warn" &&
+				String(e.args.join(" ")).includes("[ws-mock:/ws/exact]") &&
+				String(e.args.join(" ")).includes("unreachable") &&
+				String(e.args.join(" ")).includes("/ws/:kind"),
+		);
+		expect(shadow).toBeDefined();
+		// The earlier broad route itself is reachable and not flagged.
+		const falsePositive = entries.find(
+			(e) =>
+				e.level === "warn" &&
+				String(e.args.join(" ")).includes("[ws-mock:/ws/:kind]") &&
+				String(e.args.join(" ")).includes("unreachable"),
+		);
+		expect(falsePositive).toBeUndefined();
+	});
+
+	it("does not warn about shadowing for disjoint sibling routes", async () => {
+		// `/ws/a` and `/ws/b` cannot match the same path; neither shadows the
+		// other, so the heuristic must stay silent (no false positives).
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{ mountPath: "/ws/a", handler: "test/fixtures/handlers/echo.ts" },
+						{ mountPath: "/ws/b", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+
+		const shadow = entries.find(
+			(e) => e.level === "warn" && String(e.args.join(" ")).includes("unreachable"),
+		);
+		expect(shadow).toBeUndefined();
+	});
+
+	it("warns when a mountPath declares duplicate parameter names", async () => {
+		// path-to-regexp v8 compiles `/ws/:id/:id` without error but keeps only
+		// the last `:id`, silently dropping the first segment's value.
+		const args = paramsRoute("/ws/:id/:id");
+		await wsMock(args);
+
+		const dup = args.entries.find(
+			(e) =>
+				e.level === "warn" &&
+				String(e.args.join(" ")).includes("duplicate parameter name") &&
+				String(e.args.join(" ")).includes("id"),
+		);
+		expect(dup).toBeDefined();
+	});
 });
 
 describe("ws-mock middleware: configuration and handler resolution", () => {
@@ -1047,6 +1196,35 @@ describe("ws-mock middleware: configuration and handler resolution", () => {
 			}),
 		).resolves.toBeDefined();
 		expect(getSourcePath).not.toHaveBeenCalled();
+	});
+
+	it("the listening banner lists only routes that compiled (disabled routes excluded)", async () => {
+		// `/ws/:bad?` fails to compile (v8 rejects `?`), so it is disabled and
+		// never listens; the banner must advertise only the live `/ws/ok` route.
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{ mountPath: "/ws/ok", handler: "test/fixtures/handlers/echo.ts" },
+						{ mountPath: "/ws/:bad?", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+		fireHook(serverHandle.server);
+
+		const banner = entries.find(
+			(e) =>
+				e.level === "info" &&
+				String(e.args.join(" ")).includes("listening for upgrades on"),
+		);
+		expect(banner).toBeDefined();
+		const text = String(banner!.args.join(" "));
+		expect(text).toContain("/ws/ok");
+		expect(text).not.toContain(":bad?");
 	});
 });
 

@@ -32,7 +32,7 @@ import { pathToFileURL } from "node:url";
 import type { IncomingMessage, Server } from "node:http";
 import { Buffer } from "node:buffer";
 import { WebSocketServer, type WebSocket } from "ws";
-import { match as compilePath, type MatchFunction } from "path-to-regexp";
+import { match as compilePath, parse as parsePattern, type MatchFunction } from "path-to-regexp";
 // @ts-expect-error -- ui5-utils-express ships no type declarations; the module is a thin
 // server-listening hook that returns a UI5-compatible middleware factory.
 import hook from "ui5-utils-express/lib/hook.js";
@@ -99,6 +99,46 @@ interface HookCallbackArgs {
 /** Route-scoped log prefix, e.g. `[ws-mock:/ws/foo]`. */
 function routeTag(mountPath: string): string {
 	return `[ws-mock:${mountPath}]`;
+}
+
+/** A `path-to-regexp` parse token, narrowed to the shapes we inspect. */
+type PatternToken =
+	| { type: "text"; value: string }
+	| { type: "param"; name: string }
+	| { type: "wildcard"; name: string }
+	| { type: "group"; tokens: PatternToken[] };
+
+/**
+ * True when `mountPath` has no leading static segment, so its matcher claims
+ * upgrade paths from the URL root rather than under a literal prefix. Such a
+ * route (e.g. `/{*splat}`, `/:kind`) silently swallows upgrades meant for other
+ * listeners (ui5-middleware-livereload's WS channel etc.), defeating the
+ * coexistence contract. A bare-root literal (`/`) is scoped (it matches only
+ * `/`), so it is not flagged.
+ */
+function lacksStaticPrefix(tokens: PatternToken[]): boolean {
+	const first = tokens[0];
+	if (!first || first.type !== "text") return true; // opens with a dynamic part
+	if (/[^/]/.test(first.value)) return false; // has a real literal segment
+	return tokens.length > 1; // root-only literal followed by a dynamic part
+}
+
+/** Param/wildcard names that appear more than once in the pattern (any depth). */
+function duplicateParamNames(tokens: PatternToken[]): string[] {
+	const seen = new Set<string>();
+	const dupes = new Set<string>();
+	const walk = (ts: PatternToken[]): void => {
+		for (const token of ts) {
+			if (token.type === "param" || token.type === "wildcard") {
+				if (seen.has(token.name)) dupes.add(token.name);
+				else seen.add(token.name);
+			} else if (token.type === "group") {
+				walk(token.tokens);
+			}
+		}
+	};
+	walk(tokens);
+	return [...dupes];
 }
 
 /**
@@ -340,6 +380,7 @@ function attachConnection(
 	req: IncomingMessage,
 	loaded: LoadedRoute,
 	params: RouteParams,
+	pathname: string,
 	baseLog: FactoryParameters["log"],
 ): void {
 	const prefix = routeTag(loaded.route.mountPath);
@@ -361,7 +402,10 @@ function attachConnection(
 		notifyError(ctx, onError, err);
 	});
 
-	ctx.log.info(`connect (mode=${mode})`);
+	// Surface the concrete request pathname (and any extracted params) so a
+	// parametrized route's actual match is visible when debugging routing.
+	const paramsSuffix = Object.keys(params).length > 0 ? ` params=${JSON.stringify(params)}` : "";
+	ctx.log.info(`connect (mode=${mode}) path=${pathname}${paramsSuffix}`);
 
 	if (onConnect) {
 		invoke("onConnect", ctx, onError, () => onConnect(ctx));
@@ -451,6 +495,7 @@ export default async function wsMock({
 	// configured order rather than collapsing into a path-keyed map. An exact
 	// duplicate mountPath is shadowed by the earlier entry and can never match.
 	const seenPaths = new Set<string>();
+	const earlier: LoadedRoute[] = [];
 	for (const entry of loaded) {
 		const tag = routeTag(entry.route.mountPath);
 		if (entry.handler) {
@@ -471,6 +516,53 @@ export default async function wsMock({
 			);
 		}
 		seenPaths.add(entry.route.mountPath);
+
+		// Pattern-shape diagnostics only apply to routes that actually compiled.
+		// All are warnings: the route still functions, but the config is likely a
+		// mistake (a coexistence hazard, a dead route, or a dropped param value).
+		if (entry.match) {
+			let tokens: PatternToken[] = [];
+			try {
+				// `parsePattern` shares the parser with `compilePath`, which already
+				// succeeded above, so this does not throw in practice; guard anyway.
+				tokens = parsePattern(entry.route.mountPath).tokens as unknown as PatternToken[];
+			} catch {
+				tokens = [];
+			}
+			if (lacksStaticPrefix(tokens)) {
+				log.warn(
+					`${tag} mountPath has no leading static segment, so it matches upgrade ` +
+						`paths from the URL root and will claim them from other upgrade listeners ` +
+						`(e.g. ui5-middleware-livereload). Add a literal prefix such as /ws/... to scope it.`,
+				);
+			}
+			const dupes = duplicateParamNames(tokens);
+			if (dupes.length > 0) {
+				log.warn(
+					`${tag} mountPath declares duplicate parameter name(s): ${dupes.join(", ")}; ` +
+						`path-to-regexp keeps only the last occurrence, so the earlier value is dropped.`,
+				);
+			}
+			// First-match-wins means an earlier pattern that already matches this
+			// route's path makes this route unreachable. Probe the (string) mountPath
+			// against each earlier matcher; a throw (e.g. a stray %-escape) is
+			// inconclusive, so skip it.
+			for (const prior of earlier) {
+				if (!prior.match || prior.route.mountPath === entry.route.mountPath) continue;
+				try {
+					if (prior.match(entry.route.mountPath)) {
+						log.warn(
+							`${tag} mountPath is unreachable: it is shadowed by the earlier route ` +
+								`${prior.route.mountPath} (first match wins). List more specific routes first.`,
+						);
+						break;
+					}
+				} catch {
+					continue;
+				}
+			}
+		}
+		earlier.push(entry);
 	}
 
 	return hook("ui5-middleware-ws-mock", ({ server }: HookCallbackArgs) => {
@@ -518,11 +610,17 @@ export default async function wsMock({
 			const matched = matchRoute(loaded, pathname, log);
 			if (!matched) return;
 			wss.handleUpgrade(req, socket, head, (ws) =>
-				attachConnection(ws, req, matched.entry, matched.params, log),
+				attachConnection(ws, req, matched.entry, matched.params, pathname, log),
 			);
 		});
 
-		const mountPaths = routes.map((r) => r.mountPath).join(", ") || "(none)";
+		// List only routes that can actually match; a route whose pattern failed
+		// to compile is disabled and never listens, so advertising it here misleads.
+		const mountPaths =
+			loaded
+				.filter((entry) => entry.match)
+				.map((entry) => entry.route.mountPath)
+				.join(", ") || "(none)";
 		log.info(`[ws-mock] listening for upgrades on: ${mountPaths}`);
 	});
 }
