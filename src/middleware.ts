@@ -74,6 +74,12 @@ interface LoadedRoute {
 	tokens: Token[];
 }
 
+/** A route matched against an upgrade pathname, with its extracted params. */
+interface MatchedRoute {
+	entry: LoadedRoute;
+	params: RouteParams;
+}
+
 interface FactoryParameters {
 	/**
 	 * `@ui5/logger/Logger` instance the UI5 tooling passes in. `@ui5/logger`
@@ -388,11 +394,11 @@ function invoke(
 function attachConnection(
 	ws: WebSocket,
 	req: IncomingMessage,
-	loaded: LoadedRoute,
-	params: RouteParams,
+	matched: MatchedRoute,
 	pathname: string,
 	baseLog: FactoryParameters["log"],
 ): void {
+	const { entry: loaded, params } = matched;
 	const prefix = routeTag(loaded.route.mountPath);
 
 	// An always-on `'error'` listener is required: Node's EventEmitter contract
@@ -454,7 +460,7 @@ function matchRoute(
 	routes: LoadedRoute[],
 	pathname: string,
 	log: WebSocketLog,
-): { entry: LoadedRoute; params: RouteParams } | null {
+): MatchedRoute | null {
 	for (const entry of routes) {
 		if (!entry.match) continue;
 		try {
@@ -633,7 +639,7 @@ export default async function wsMock({
 			const matched = matchRoute(loaded, pathname, log);
 			if (!matched) return;
 			wss.handleUpgrade(req, socket, head, (ws) =>
-				attachConnection(ws, req, matched.entry, matched.params, pathname, log),
+				attachConnection(ws, req, matched, pathname, log),
 			);
 		});
 
