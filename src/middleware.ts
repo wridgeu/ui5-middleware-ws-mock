@@ -32,7 +32,12 @@ import { pathToFileURL } from "node:url";
 import type { IncomingMessage, Server } from "node:http";
 import { Buffer } from "node:buffer";
 import { WebSocketServer, type WebSocket } from "ws";
-import { match as compilePath, parse as parsePattern, type MatchFunction } from "path-to-regexp";
+import {
+	match as compilePath,
+	parse as parsePattern,
+	type MatchFunction,
+	type Token,
+} from "path-to-regexp";
 // @ts-expect-error -- ui5-utils-express ships no type declarations; the module is a thin
 // server-listening hook that returns a UI5-compatible middleware factory.
 import hook from "ui5-utils-express/lib/hook.js";
@@ -62,6 +67,11 @@ interface LoadedRoute {
 	match: MatchFunction<RouteParams> | null;
 	/** Error thrown while compiling `mountPath`, if any. */
 	matchError?: unknown;
+	/**
+	 * Parsed `mountPath` tokens, reused for the startup pattern-shape diagnostics.
+	 * Empty when the pattern failed to parse (`matchError` is set).
+	 */
+	tokens: Token[];
 }
 
 interface FactoryParameters {
@@ -101,13 +111,6 @@ function routeTag(mountPath: string): string {
 	return `[ws-mock:${mountPath}]`;
 }
 
-/** A `path-to-regexp` parse token, narrowed to the shapes we inspect. */
-type PatternToken =
-	| { type: "text"; value: string }
-	| { type: "param"; name: string }
-	| { type: "wildcard"; name: string }
-	| { type: "group"; tokens: PatternToken[] };
-
 /**
  * True when `mountPath` has no leading static segment, so its matcher claims
  * upgrade paths from the URL root rather than under a literal prefix. Such a
@@ -116,7 +119,7 @@ type PatternToken =
  * coexistence contract. A bare-root literal (`/`) is scoped (it matches only
  * `/`), so it is not flagged.
  */
-function lacksStaticPrefix(tokens: PatternToken[]): boolean {
+function lacksStaticPrefix(tokens: Token[]): boolean {
 	const first = tokens[0];
 	if (!first || first.type !== "text") return true; // opens with a dynamic part
 	if (/[^/]/.test(first.value)) return false; // has a real literal segment
@@ -124,10 +127,10 @@ function lacksStaticPrefix(tokens: PatternToken[]): boolean {
 }
 
 /** Param/wildcard names that appear more than once in the pattern (any depth). */
-function duplicateParamNames(tokens: PatternToken[]): string[] {
+function duplicateParamNames(tokens: Token[]): string[] {
 	const seen = new Set<string>();
 	const dupes = new Set<string>();
-	const walk = (ts: PatternToken[]): void => {
+	const walk = (ts: Token[]): void => {
 		for (const token of ts) {
 			if (token.type === "param" || token.type === "wildcard") {
 				if (seen.has(token.name)) dupes.add(token.name);
@@ -172,13 +175,19 @@ function resolveHandlerRoot(
 async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
 	const absolutePath = resolve(handlerRoot, route.handler);
 
-	// Compile the mount path once at startup. An invalid pattern (e.g. legacy
-	// `:opt?` syntax that v8 rejects) makes `compilePath` throw; capture it so the
-	// route is disabled with a startup error instead of crashing `ui5 serve`.
+	// Parse and compile the mount path once at startup. An invalid pattern (e.g.
+	// legacy `:opt?` syntax that v8 rejects) makes `parsePattern` throw; capture
+	// it so the route is disabled with a startup error instead of crashing
+	// `ui5 serve`. The matcher is compiled from the same `TokenData`, and the
+	// tokens are kept for the startup pattern-shape diagnostics, so the pattern
+	// is parsed exactly once.
 	let match: MatchFunction<RouteParams> | null = null;
 	let matchError: unknown;
+	let tokens: Token[] = [];
 	try {
-		match = compilePath<RouteParams>(route.mountPath);
+		const parsed = parsePattern(route.mountPath);
+		tokens = parsed.tokens;
+		match = compilePath<RouteParams>(parsed);
 	} catch (err) {
 		matchError = err;
 	}
@@ -194,12 +203,13 @@ async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<
 				handler: null,
 				match,
 				matchError,
+				tokens,
 				loadError: new Error(`handler module ${route.handler} has no default export`),
 			};
 		}
-		return { route, absolutePath, handler: mod.default, match, matchError };
+		return { route, absolutePath, handler: mod.default, match, matchError, tokens };
 	} catch (loadError) {
-		return { route, absolutePath, handler: null, match, matchError, loadError };
+		return { route, absolutePath, handler: null, match, matchError, tokens, loadError };
 	}
 }
 
@@ -521,14 +531,7 @@ export default async function wsMock({
 		// All are warnings: the route still functions, but the config is likely a
 		// mistake (a coexistence hazard, a dead route, or a dropped param value).
 		if (entry.match) {
-			let tokens: PatternToken[] = [];
-			try {
-				// `parsePattern` shares the parser with `compilePath`, which already
-				// succeeded above, so this does not throw in practice; guard anyway.
-				tokens = parsePattern(entry.route.mountPath).tokens as unknown as PatternToken[];
-			} catch {
-				tokens = [];
-			}
+			const tokens = entry.tokens;
 			if (lacksStaticPrefix(tokens)) {
 				log.warn(
 					`${tag} mountPath has no leading static segment, so it matches upgrade ` +
