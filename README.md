@@ -95,7 +95,13 @@ Pre-1.0 the public types and the middleware configuration shape may change in mi
 
     The handler runs in the `ui5 serve` Node process. `message` is a `string` in plain mode and `{ fields, body }` in PCP mode; the handler narrows on `typeof` (or on `ctx.mode`).
 
-4. Run `npm start`. The server log prints one pair of lines per configured route:
+4. Run `npm start`. At the default log level the middleware prints the listening banner (plus a `connect` / `close` line per connection):
+
+    ```text
+    [ws-mock] listening for upgrades on: /ws/foo
+    ```
+
+    Run `ui5 serve --verbose` to also surface the per-route resolution detail (effective root and the absolute resolved handler path):
 
     ```text
     [ws-mock] resolving handler paths against /abs/path/to/project/webapp
@@ -103,7 +109,7 @@ Pre-1.0 the public types and the middleware configuration shape may change in mi
     [ws-mock] listening for upgrades on: /ws/foo
     ```
 
-    The first line is logged at `verbose` and shows the effective root path; the per-route line also includes the absolute resolved path, so a handler load failure points directly at the file the middleware tried to import.
+    A handler that fails to load is logged at `error` (always shown) with that same absolute path, so the failure points directly at the file the middleware tried to import.
 
 > [!TIP]
 > Handlers and `ui5.yaml` edits require a `ui5 serve` restart; livereload only covers `webapp/`-side code. See [Limitations](#limitations) for the supervisor pattern that automates it.

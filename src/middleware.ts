@@ -479,9 +479,11 @@ function matchRoute(
 
 /**
  * Emits the per-route startup log lines for the loaded route table, walked in
- * declaration order (the order that decides first-match-wins). Reports each
- * handler's load status and an invalid, disabled pattern, then warns about
- * three first-match-wins footguns that exact-string matching could not produce:
+ * declaration order (the order that decides first-match-wins). A successful
+ * handler load is per-route detail, logged at `verbose` (visible with
+ * `ui5 serve --verbose`); a failed load and an invalid, disabled pattern are
+ * logged at `error`. It then warns about three first-match-wins footguns that
+ * exact-string matching could not produce:
  *
  *   - a duplicate `mountPath` shadowed by an earlier identical entry;
  *   - a pattern with no leading static segment, which matches from the URL root
@@ -499,7 +501,9 @@ function reportRouteDiagnostics(loaded: LoadedRoute[], log: WebSocketLog): void 
 	for (const entry of loaded) {
 		const tag = routeTag(entry.route.mountPath);
 		if (entry.handler) {
-			log.info(`${tag} handler loaded from ${entry.route.handler} (${entry.absolutePath})`);
+			log.verbose(
+				`${tag} handler loaded from ${entry.route.handler} (${entry.absolutePath})`,
+			);
 		} else {
 			log.error(
 				`${tag} handler load failed from ${entry.route.handler} (${entry.absolutePath}):`,

@@ -59,15 +59,22 @@ function buildFactoryArgs(handlerRelative: string, mountPath: string) {
 }
 
 describe("ws-mock middleware: wire layer (plain and PCP)", () => {
-	it("reports handler load and listens on the mountPath", async () => {
+	it("logs handler load as verbose detail and the listening banner at info", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
 		fireHook(serverHandle.server);
 
+		// The per-route load line is verbose detail (surfaced via `ui5 serve
+		// --verbose`), not default-level noise; the listening banner stays at info.
 		const loaded = args.entries.find(
-			(e) => e.level === "info" && String(e.args[0]).includes("handler loaded"),
+			(e) => e.level === "verbose" && String(e.args[0]).includes("handler loaded"),
 		);
 		expect(loaded).toBeDefined();
+		expect(
+			args.entries.some(
+				(e) => e.level === "info" && String(e.args[0]).includes("handler loaded"),
+			),
+		).toBe(false);
 
 		const listening = args.entries.find(
 			(e) => e.level === "info" && String(e.args[0]).includes("listening for upgrades"),
