@@ -4,6 +4,7 @@ import type {
 	EncodeOptions,
 	PcpWebSocketContext,
 	PlainWebSocketContext,
+	RouteParams,
 	WebSocketContext,
 	WebSocketHandler,
 } from "../src/index.js";
@@ -118,5 +119,30 @@ describe("ctx.data bag", () => {
 		expectTypeOf<NonNullable<Handler["onError"]>>()
 			.parameter(0)
 			.toEqualTypeOf<WebSocketContext<CounterState>>();
+	});
+});
+
+describe("ctx.params", () => {
+	it("is the public RouteParams record on every branch", () => {
+		// `RouteParams` is the percent-decoded string/string[] map surfaced on
+		// `ctx.params`; it is re-exported from the package root so consumers can
+		// name it. The shape assertion guards the definition itself.
+		expectTypeOf<RouteParams>().toEqualTypeOf<Record<string, string | string[]>>();
+		expectTypeOf<WebSocketContext["params"]>().toEqualTypeOf<RouteParams>();
+		expectTypeOf<PlainWebSocketContext["params"]>().toEqualTypeOf<RouteParams>();
+		expectTypeOf<PcpWebSocketContext["params"]>().toEqualTypeOf<RouteParams>();
+	});
+
+	it("is independent of TData and survives narrowing on ctx.mode", () => {
+		// `params` is a plain field (not parameterized by TData), so it stays
+		// `RouteParams` after both the `<TData>` instantiation and the
+		// `if (ctx.mode === "pcp")` narrow.
+		type Narrowed<M extends WebSocketContext["mode"]> = Extract<
+			WebSocketContext<CounterState>,
+			{ mode: M }
+		>;
+		expectTypeOf<WebSocketContext<CounterState>["params"]>().toEqualTypeOf<RouteParams>();
+		expectTypeOf<Narrowed<"pcp">["params"]>().toEqualTypeOf<RouteParams>();
+		expectTypeOf<Narrowed<"plain">["params"]>().toEqualTypeOf<RouteParams>();
 	});
 });

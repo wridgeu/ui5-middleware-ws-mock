@@ -9,6 +9,7 @@ export type {
 	InboundMessage,
 	WebSocketHandler,
 	WebSocketRoute,
+	RouteParams,
 	WebSocketMiddlewareConfiguration,
 } from "./types.js";
 export { encode, decode, pcpEscape, pcpUnescape, SUBPROTOCOL } from "./pcp.js";
