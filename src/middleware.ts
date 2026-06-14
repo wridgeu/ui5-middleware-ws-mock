@@ -472,38 +472,22 @@ function matchRoute(
 }
 
 /**
- * UI5 custom-middleware factory. Returns a middleware function that the
- * `ui5-utils-express/lib/hook` utility turns into a server-listening
- * callback. The returned middleware is otherwise a pass-through; WebSocket
- * upgrade requests bypass the HTTP middleware chain entirely.
+ * Emits the per-route startup log lines for the loaded route table, walked in
+ * declaration order (the order that decides first-match-wins). Reports each
+ * handler's load status and an invalid, disabled pattern, then warns about
+ * three first-match-wins footguns that exact-string matching could not produce:
+ *
+ *   - a duplicate `mountPath` shadowed by an earlier identical entry;
+ *   - a pattern with no leading static segment, which matches from the URL root
+ *     and would steal upgrades from coexisting listeners (livereload etc.);
+ *   - a route made unreachable by an earlier, broader pattern.
+ *
+ * Every hazard is a warning, never a refusal: the routes still function, but the
+ * configuration is most likely a mistake.
  */
-export default async function wsMock({
-	log,
-	options,
-	middlewareUtil,
-}: FactoryParameters): Promise<unknown> {
-	const routes = options.configuration?.routes ?? [];
-	if (routes.length === 0) {
-		log.warn("[ws-mock] no routes configured; middleware is a no-op");
-	}
-
-	// Anchor handler resolution at the project's source path (or the configured
-	// rootPath override) so paths are independent of where `ui5 serve` was
-	// launched from. See `resolveHandlerRoot` for the precedence rules.
-	// Resolve lazily: with no routes there's nothing to load, and skipping the
-	// resolve avoids crashing on Module-type projects (whose getSourcePath()
-	// throws) when this middleware is declared but unused.
-	const loaded: LoadedRoute[] = [];
-	if (routes.length > 0) {
-		const project = middlewareUtil.getProject();
-		const handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
-		log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
-		loaded.push(...(await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)))));
-	}
-
-	// Routes are matched in declaration order (first-match-wins), so keep the
-	// configured order rather than collapsing into a path-keyed map. An exact
-	// duplicate mountPath is shadowed by the earlier entry and can never match.
+function reportRouteDiagnostics(loaded: LoadedRoute[], log: WebSocketLog): void {
+	// Track the paths already seen (exact-duplicate detection) and the routes
+	// declared earlier (shadowing probe); both accumulate across the walk.
 	const seenPaths = new Set<string>();
 	const earlier: LoadedRoute[] = [];
 	for (const entry of loaded) {
@@ -567,6 +551,42 @@ export default async function wsMock({
 		}
 		earlier.push(entry);
 	}
+}
+
+/**
+ * UI5 custom-middleware factory. Returns a middleware function that the
+ * `ui5-utils-express/lib/hook` utility turns into a server-listening
+ * callback. The returned middleware is otherwise a pass-through; WebSocket
+ * upgrade requests bypass the HTTP middleware chain entirely.
+ */
+export default async function wsMock({
+	log,
+	options,
+	middlewareUtil,
+}: FactoryParameters): Promise<unknown> {
+	const routes = options.configuration?.routes ?? [];
+	if (routes.length === 0) {
+		log.warn("[ws-mock] no routes configured; middleware is a no-op");
+	}
+
+	// Anchor handler resolution at the project's source path (or the configured
+	// rootPath override) so paths are independent of where `ui5 serve` was
+	// launched from. See `resolveHandlerRoot` for the precedence rules.
+	// Resolve lazily: with no routes there's nothing to load, and skipping the
+	// resolve avoids crashing on Module-type projects (whose getSourcePath()
+	// throws) when this middleware is declared but unused.
+	const loaded: LoadedRoute[] = [];
+	if (routes.length > 0) {
+		const project = middlewareUtil.getProject();
+		const handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
+		log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
+		loaded.push(...(await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)))));
+	}
+
+	// Report load status and warn about first-match-wins configuration hazards.
+	// Order is preserved (not collapsed into a path-keyed map) because matching
+	// is declaration-order, first-match-wins.
+	reportRouteDiagnostics(loaded, log);
 
 	return hook("ui5-middleware-ws-mock", ({ server }: HookCallbackArgs) => {
 		const wss = new WebSocketServer({
