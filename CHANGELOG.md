@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.4.0...v0.4.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **deps:** raise ws floor to ^8.21.0 and clear audit advisories ([da03bd1](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/da03bd11401494990bece7fbb06c347639b87a46))
+
 ## [0.4.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.3.2...v0.4.0) (2026-06-13)
 
 
