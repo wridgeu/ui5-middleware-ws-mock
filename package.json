@@ -57,6 +57,7 @@
 	},
 	"dependencies": {
 		"@types/ws": "^8.18.1",
+		"path-to-regexp": "^8.4.2",
 		"ui5-utils-express": "^1.5.1",
 		"ws": "^8.21.0"
 	},

@@ -7,10 +7,13 @@
  * serve process. The server's `upgrade` event is hooked via the community
  * utility `ui5-utils-express/lib/hook` (which intercepts `app.listen` to
  * grab the underlying HTTP server; see the hook source for the full trick).
- * On each upgrade we check the request's pathname against our route table,
- * hand the socket to `wss.handleUpgrade` if we own it, and otherwise bail
- * without claiming the upgrade so other middleware (fe-mockserver etc.)
- * can handle the request. Unparseable urls log at verbose and bail too.
+ * On each upgrade we match the request's pathname against our route table —
+ * `path-to-regexp` patterns tried in declaration order, first match wins —
+ * and on a match hand the socket to `wss.handleUpgrade`, exposing any
+ * extracted path parameters on `ctx.params`. A pathname that matches no route
+ * (or whose percent-encoding cannot be decoded) is left unclaimed so other
+ * middleware (fe-mockserver etc.) can handle it. Unparseable urls log at
+ * verbose and bail too.
  *
  * PCP subprotocol negotiation is declared via `handleProtocols` at
  * WebSocketServer construction: if the client offered `v10.pcp.sap.com` we
@@ -19,7 +22,9 @@
  *
  * The middleware is transport-only beyond the wire layer: plain frames are
  * forwarded as raw strings, PCP frames are decoded into `{ fields, body }`.
- * Application-level routing and payload encoding are the handler's job.
+ * Path-level routing (pattern matching, `ctx.params`) is handled here;
+ * application-level routing (named messages → callbacks) and payload encoding
+ * remain the handler's job.
  */
 
 import { resolve } from "node:path";
@@ -27,12 +32,19 @@ import { pathToFileURL } from "node:url";
 import type { IncomingMessage, Server } from "node:http";
 import { Buffer } from "node:buffer";
 import { WebSocketServer, type WebSocket } from "ws";
+import {
+	match as compilePath,
+	parse as parsePattern,
+	type MatchFunction,
+	type Token,
+} from "path-to-regexp";
 // @ts-expect-error -- ui5-utils-express ships no type declarations; the module is a thin
 // server-listening hook that returns a UI5-compatible middleware factory.
 import hook from "ui5-utils-express/lib/hook.js";
 
 import type {
 	InboundMessage,
+	RouteParams,
 	WebSocketContext,
 	WebSocketHandler,
 	WebSocketLog,
@@ -48,6 +60,24 @@ interface LoadedRoute {
 	absolutePath: string;
 	handler: WebSocketHandler | null;
 	loadError?: unknown;
+	/**
+	 * `mountPath` compiled into a `path-to-regexp` matcher, or `null` if the
+	 * pattern failed to compile (`matchError` is set; the route can never match).
+	 */
+	match: MatchFunction<RouteParams> | null;
+	/** Error thrown while compiling `mountPath`, if any. */
+	matchError?: unknown;
+	/**
+	 * Parsed `mountPath` tokens, reused for the startup pattern-shape diagnostics.
+	 * Empty when the pattern failed to parse (`matchError` is set).
+	 */
+	tokens: Token[];
+}
+
+/** A route matched against an upgrade pathname, with its extracted params. */
+interface MatchedRoute {
+	entry: LoadedRoute;
+	params: RouteParams;
 }
 
 interface FactoryParameters {
@@ -82,6 +112,44 @@ interface HookCallbackArgs {
 	server: Server;
 }
 
+/** Route-scoped log prefix, e.g. `[ws-mock:/ws/foo]`. */
+function routeTag(mountPath: string): string {
+	return `[ws-mock:${mountPath}]`;
+}
+
+/**
+ * True when `mountPath` has no leading static segment, so its matcher claims
+ * upgrade paths from the URL root rather than under a literal prefix. Such a
+ * route (e.g. `/{*splat}`, `/:kind`) silently swallows upgrades meant for other
+ * listeners (ui5-middleware-livereload's WS channel etc.), defeating the
+ * coexistence contract. A bare-root literal (`/`) is scoped (it matches only
+ * `/`), so it is not flagged.
+ */
+function lacksStaticPrefix(tokens: Token[]): boolean {
+	const first = tokens[0];
+	if (!first || first.type !== "text") return true; // opens with a dynamic part
+	if (/[^/]/.test(first.value)) return false; // has a real literal segment
+	return tokens.length > 1; // root-only literal followed by a dynamic part
+}
+
+/** Param/wildcard names that appear more than once in the pattern (any depth). */
+function duplicateParamNames(tokens: Token[]): string[] {
+	const seen = new Set<string>();
+	const dupes = new Set<string>();
+	const walk = (ts: Token[]): void => {
+		for (const token of ts) {
+			if (token.type === "param" || token.type === "wildcard") {
+				if (seen.has(token.name)) dupes.add(token.name);
+				else seen.add(token.name);
+			} else if (token.type === "group") {
+				walk(token.tokens);
+			}
+		}
+	};
+	walk(tokens);
+	return [...dupes];
+}
+
 /**
  * Resolves the effective root that `routes[].handler` paths resolve against:
  *
@@ -104,27 +172,55 @@ function resolveHandlerRoot(
 }
 
 /**
- * Eagerly loads a handler module. Failures are captured so the route can
- * respond with a sensible close code at upgrade time instead of crashing
- * `ui5 serve`.
+ * Builds the per-route record: compiles the `mountPath` into a
+ * `path-to-regexp` matcher and eagerly imports the handler module. Both
+ * failures are captured (`matchError` / `loadError`) rather than thrown, so an
+ * invalid pattern or a broken handler surfaces as a startup log plus a disabled
+ * or self-closing route instead of crashing `ui5 serve`.
  */
 async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<LoadedRoute> {
 	const absolutePath = resolve(handlerRoot, route.handler);
+
+	// Parse and compile the mount path once at startup. An invalid pattern (e.g.
+	// legacy `:opt?` syntax that v8 rejects) makes `parsePattern` throw; capture
+	// it so the route is disabled with a startup error instead of crashing
+	// `ui5 serve`. The matcher is compiled from the same `TokenData`, and the
+	// tokens are kept for the startup pattern-shape diagnostics, so the pattern
+	// is parsed exactly once.
+	let match: MatchFunction<RouteParams> | null = null;
+	let matchError: unknown;
+	let tokens: Token[] = [];
+	try {
+		const parsed = parsePattern(route.mountPath);
+		tokens = parsed.tokens;
+		// `sensitive: true` keeps matching case-sensitive. `path-to-regexp`
+		// defaults to case-insensitive, but the pre-parametrized middleware did an
+		// exact string compare, so an upgrade to `/WS/ECHO` never matched a
+		// `/ws/echo` route. Preserving that avoids silently claiming differently
+		// cased upgrades meant for other listeners (the coexistence contract
+		// `lacksStaticPrefix` also guards). Trailing-slash tolerance is left at the
+		// library default (`/ws/echo` also matches `/ws/echo/`), as documented.
+		match = compilePath<RouteParams>(parsed, { sensitive: true });
+	} catch (err) {
+		matchError = err;
+	}
+
+	// Common fields for every outcome; only `handler`/`loadError` differ per branch.
+	const base = { route, absolutePath, match, matchError, tokens };
 	try {
 		const mod = (await import(pathToFileURL(absolutePath).href)) as {
 			default?: WebSocketHandler;
 		};
 		if (!mod.default) {
 			return {
-				route,
-				absolutePath,
+				...base,
 				handler: null,
 				loadError: new Error(`handler module ${route.handler} has no default export`),
 			};
 		}
-		return { route, absolutePath, handler: mod.default };
+		return { ...base, handler: mod.default };
 	} catch (loadError) {
-		return { route, absolutePath, handler: null, loadError };
+		return { ...base, handler: null, loadError };
 	}
 }
 
@@ -142,6 +238,7 @@ function createContext(
 	ws: WebSocket,
 	req: IncomingMessage,
 	mode: WebSocketMode,
+	params: RouteParams,
 	prefix: string,
 	baseLog: FactoryParameters["log"],
 ): WebSocketContext {
@@ -190,6 +287,10 @@ function createContext(
 	// Typed loosely here; the handler narrows it via `WebSocketHandler<TData>`.
 	const data: Record<string, unknown> = {};
 
+	// Mode-independent fields; `mode` + `send` are added per branch so the
+	// returned object still discriminates into the right `WebSocketContext` member.
+	const base = { ws, req, params, log, data, close, terminate };
+
 	if (mode === "pcp") {
 		// `encode()` only throws on empty field names. The string overload
 		// cannot produce that; the `EncodeOptions` overload can, but the throw
@@ -200,11 +301,11 @@ function createContext(
 				typeof message === "string" ? { body: message } : message;
 			writeRaw(encode(options));
 		};
-		return { ws, req, mode, log, data, send, close, terminate };
+		return { ...base, mode, send };
 	}
 
 	const send = (message: string): void => writeRaw(message);
-	return { ws, req, mode, log, data, send, close, terminate };
+	return { ...base, mode, send };
 }
 
 /**
@@ -303,10 +404,12 @@ function invoke(
 function attachConnection(
 	ws: WebSocket,
 	req: IncomingMessage,
-	loaded: LoadedRoute,
+	matched: MatchedRoute,
+	pathname: string,
 	baseLog: FactoryParameters["log"],
 ): void {
-	const prefix = `[ws-mock:${loaded.route.mountPath}]`;
+	const { entry: loaded, params } = matched;
+	const prefix = routeTag(loaded.route.mountPath);
 
 	// An always-on `'error'` listener is required: Node's EventEmitter contract
 	// crashes the process on an unlistened `'error'`, and `ws` can emit one for
@@ -318,14 +421,17 @@ function attachConnection(
 		return;
 	}
 	const mode: WebSocketMode = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
-	const ctx = createContext(ws, req, mode, prefix, baseLog);
+	const ctx = createContext(ws, req, mode, params, prefix, baseLog);
 	const { onConnect, onMessage, onClose, onError } = loaded.handler;
 	ws.on("error", (err) => {
 		ctx.log.error("socket error:", err);
 		notifyError(ctx, onError, err);
 	});
 
-	ctx.log.info(`connect (mode=${mode})`);
+	// Surface the concrete request pathname (and any extracted params) so a
+	// parametrized route's actual match is visible when debugging routing.
+	const paramsSuffix = Object.keys(params).length > 0 ? ` params=${JSON.stringify(params)}` : "";
+	ctx.log.info(`connect (mode=${mode}) path=${pathname}${paramsSuffix}`);
 
 	if (onConnect) {
 		invoke("onConnect", ctx, onError, () => onConnect(ctx));
@@ -348,6 +454,123 @@ function attachConnection(
 			invoke("onClose", ctx, onError, () => onClose(ctx, code, reason));
 		}
 	});
+}
+
+/**
+ * Finds the first route whose compiled `mountPath` matches `pathname`, in
+ * declaration order (first-match-wins). Returns the matched route together with
+ * the extracted, percent-decoded `params`, or `null` when nothing matches.
+ *
+ * `path-to-regexp`'s matcher decodes params with `decodeURIComponent`, which
+ * throws on malformed `%`-sequences (e.g. `%ZZ`). A throw is treated as a
+ * non-match for that route — logged at verbose — so a malformed URL never
+ * crashes the upgrade handler; matching continues with the remaining routes.
+ */
+function matchRoute(
+	routes: LoadedRoute[],
+	pathname: string,
+	log: WebSocketLog,
+): MatchedRoute | null {
+	for (const entry of routes) {
+		if (!entry.match) continue;
+		try {
+			const result = entry.match(pathname);
+			if (result) return { entry, params: result.params };
+		} catch (err) {
+			log.verbose(
+				`${routeTag(entry.route.mountPath)} ignoring ${pathname}: ` +
+					`match threw (malformed percent-encoding?):`,
+				err,
+			);
+		}
+	}
+	return null;
+}
+
+/**
+ * Emits the per-route startup log lines for the loaded route table, walked in
+ * declaration order (the order that decides first-match-wins). A successful
+ * handler load is per-route detail, logged at `verbose` (visible with
+ * `ui5 serve --verbose`); a failed load and an invalid, disabled pattern are
+ * logged at `error`. It then warns about three first-match-wins footguns that
+ * exact-string matching could not produce:
+ *
+ *   - a duplicate `mountPath` shadowed by an earlier identical entry;
+ *   - a pattern with no leading static segment, which matches from the URL root
+ *     and would steal upgrades from coexisting listeners (livereload etc.);
+ *   - a route made unreachable by an earlier, broader pattern.
+ *
+ * Every hazard is a warning, never a refusal: the routes still function, but the
+ * configuration is most likely a mistake.
+ */
+function reportRouteDiagnostics(loaded: LoadedRoute[], log: WebSocketLog): void {
+	// Track the paths already seen (exact-duplicate detection) and the routes
+	// declared earlier (shadowing probe); both accumulate across the walk.
+	const seenPaths = new Set<string>();
+	const earlier: LoadedRoute[] = [];
+	for (const entry of loaded) {
+		const tag = routeTag(entry.route.mountPath);
+		if (entry.handler) {
+			log.verbose(
+				`${tag} handler loaded from ${entry.route.handler} (${entry.absolutePath})`,
+			);
+		} else {
+			log.error(
+				`${tag} handler load failed from ${entry.route.handler} (${entry.absolutePath}):`,
+				entry.loadError,
+			);
+		}
+		if (entry.matchError) {
+			log.error(`${tag} invalid mountPath pattern; route disabled:`, entry.matchError);
+		}
+		if (seenPaths.has(entry.route.mountPath)) {
+			log.warn(
+				`[ws-mock] duplicate mountPath ${entry.route.mountPath}; ` +
+					`earlier route wins, this entry is shadowed`,
+			);
+		}
+		seenPaths.add(entry.route.mountPath);
+
+		// Pattern-shape diagnostics only apply to routes that actually compiled.
+		// All are warnings: the route still functions, but the config is likely a
+		// mistake (a coexistence hazard, a dead route, or a dropped param value).
+		if (entry.match) {
+			const tokens = entry.tokens;
+			if (lacksStaticPrefix(tokens)) {
+				log.warn(
+					`${tag} mountPath has no leading static segment, so it matches upgrade ` +
+						`paths from the URL root and will claim them from other upgrade listeners ` +
+						`(e.g. ui5-middleware-livereload). Add a literal prefix such as /ws/... to scope it.`,
+				);
+			}
+			const dupes = duplicateParamNames(tokens);
+			if (dupes.length > 0) {
+				log.warn(
+					`${tag} mountPath declares duplicate parameter name(s): ${dupes.join(", ")}; ` +
+						`path-to-regexp keeps only the last occurrence, so the earlier value is dropped.`,
+				);
+			}
+			// First-match-wins means an earlier pattern that already matches this
+			// route's path makes this route unreachable. Probe the (string) mountPath
+			// against each earlier matcher; a throw (e.g. a stray %-escape) is
+			// inconclusive, so skip it.
+			for (const prior of earlier) {
+				if (!prior.match || prior.route.mountPath === entry.route.mountPath) continue;
+				try {
+					if (prior.match(entry.route.mountPath)) {
+						log.warn(
+							`${tag} mountPath is unreachable: it is shadowed by the earlier route ` +
+								`${prior.route.mountPath} (first match wins). List more specific routes first.`,
+						);
+						break;
+					}
+				} catch {
+					continue;
+				}
+			}
+		}
+		earlier.push(entry);
+	}
 }
 
 /**
@@ -380,22 +603,10 @@ export default async function wsMock({
 		loaded.push(...(await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)))));
 	}
 
-	const byPath = new Map<string, LoadedRoute>();
-	for (const entry of loaded) {
-		const tag = `[ws-mock:${entry.route.mountPath}]`;
-		if (entry.handler) {
-			log.info(`${tag} handler loaded from ${entry.route.handler} (${entry.absolutePath})`);
-		} else {
-			log.error(
-				`${tag} handler load failed from ${entry.route.handler} (${entry.absolutePath}):`,
-				entry.loadError,
-			);
-		}
-		if (byPath.has(entry.route.mountPath)) {
-			log.warn(`[ws-mock] duplicate mountPath ${entry.route.mountPath}; later route wins`);
-		}
-		byPath.set(entry.route.mountPath, entry);
-	}
+	// Report load status and warn about first-match-wins configuration hazards.
+	// Order is preserved (not collapsed into a path-keyed map) because matching
+	// is declaration-order, first-match-wins.
+	reportRouteDiagnostics(loaded, log);
 
 	return hook("ui5-middleware-ws-mock", ({ server }: HookCallbackArgs) => {
 		const wss = new WebSocketServer({
@@ -439,12 +650,20 @@ export default async function wsMock({
 				log.verbose(`[ws-mock] ignoring upgrade with unparseable url=${req.url}:`, err);
 				return;
 			}
-			const entry = byPath.get(pathname);
-			if (!entry) return;
-			wss.handleUpgrade(req, socket, head, (ws) => attachConnection(ws, req, entry, log));
+			const matched = matchRoute(loaded, pathname, log);
+			if (!matched) return;
+			wss.handleUpgrade(req, socket, head, (ws) =>
+				attachConnection(ws, req, matched, pathname, log),
+			);
 		});
 
-		const mountPaths = routes.map((r) => r.mountPath).join(", ") || "(none)";
+		// List only routes that can actually match; a route whose pattern failed
+		// to compile is disabled and never listens, so advertising it here misleads.
+		const mountPaths =
+			loaded
+				.filter((entry) => entry.match)
+				.map((entry) => entry.route.mountPath)
+				.join(", ") || "(none)";
 		log.info(`[ws-mock] listening for upgrades on: ${mountPaths}`);
 	});
 }
