@@ -205,24 +205,22 @@ async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<
 		matchError = err;
 	}
 
+	// Common fields for every outcome; only `handler`/`loadError` differ per branch.
+	const base = { route, absolutePath, match, matchError, tokens };
 	try {
 		const mod = (await import(pathToFileURL(absolutePath).href)) as {
 			default?: WebSocketHandler;
 		};
 		if (!mod.default) {
 			return {
-				route,
-				absolutePath,
+				...base,
 				handler: null,
-				match,
-				matchError,
-				tokens,
 				loadError: new Error(`handler module ${route.handler} has no default export`),
 			};
 		}
-		return { route, absolutePath, handler: mod.default, match, matchError, tokens };
+		return { ...base, handler: mod.default };
 	} catch (loadError) {
-		return { route, absolutePath, handler: null, match, matchError, tokens, loadError };
+		return { ...base, handler: null, loadError };
 	}
 }
 
@@ -289,6 +287,10 @@ function createContext(
 	// Typed loosely here; the handler narrows it via `WebSocketHandler<TData>`.
 	const data: Record<string, unknown> = {};
 
+	// Mode-independent fields; `mode` + `send` are added per branch so the
+	// returned object still discriminates into the right `WebSocketContext` member.
+	const base = { ws, req, params, log, data, close, terminate };
+
 	if (mode === "pcp") {
 		// `encode()` only throws on empty field names. The string overload
 		// cannot produce that; the `EncodeOptions` overload can, but the throw
@@ -299,11 +301,11 @@ function createContext(
 				typeof message === "string" ? { body: message } : message;
 			writeRaw(encode(options));
 		};
-		return { ws, req, mode, params, log, data, send, close, terminate };
+		return { ...base, mode, send };
 	}
 
 	const send = (message: string): void => writeRaw(message);
-	return { ws, req, mode, params, log, data, send, close, terminate };
+	return { ...base, mode, send };
 }
 
 /**
