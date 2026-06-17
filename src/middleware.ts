@@ -193,7 +193,14 @@ async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<
 	try {
 		const parsed = parsePattern(route.mountPath);
 		tokens = parsed.tokens;
-		match = compilePath<RouteParams>(parsed);
+		// `sensitive: true` keeps matching case-sensitive. `path-to-regexp`
+		// defaults to case-insensitive, but the pre-parametrized middleware did an
+		// exact string compare, so an upgrade to `/WS/ECHO` never matched a
+		// `/ws/echo` route. Preserving that avoids silently claiming differently
+		// cased upgrades meant for other listeners (the coexistence contract
+		// `lacksStaticPrefix` also guards). Trailing-slash tolerance is left at the
+		// library default (`/ws/echo` also matches `/ws/echo/`), as documented.
+		match = compilePath<RouteParams>(parsed, { sensitive: true });
 	} catch (err) {
 		matchError = err;
 	}

@@ -671,6 +671,49 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 		expect(await connectAndReadParams("/ws/echo")).toEqual({});
 	});
 
+	it("matching is case-sensitive: a differently cased pathname is left for other middleware", async () => {
+		// `path-to-regexp` defaults to case-insensitive; the middleware compiles
+		// with `sensitive: true` to preserve the pre-parametrized exact-match
+		// behavior. A `/WS/ECHO` upgrade must therefore NOT be claimed by the
+		// `/ws/echo` route — it falls through to a coexisting listener (stand-in
+		// for another middleware). Without `sensitive: true` ws-mock would claim
+		// it and the fixture would reply with params, so this would hang/fail.
+		const args = paramsRoute("/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const fallthroughWss = new WebSocketServer({ noServer: true });
+		let fallthroughResolve: ((path: string) => void) | null = null;
+		const fallthroughOccurred = new Promise<string>((resolve) => {
+			fallthroughResolve = resolve;
+		});
+		serverHandle.server.on("upgrade", (req, socket, head) => {
+			const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+			if (pathname !== "/WS/ECHO") return;
+			fallthroughWss.handleUpgrade(req, socket, head, (ws) => {
+				fallthroughResolve?.(pathname);
+				ws.close();
+			});
+		});
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/WS/ECHO`);
+		await waitForOpen(ws);
+		expect(await fallthroughOccurred).toBe("/WS/ECHO");
+		ws.close();
+		fallthroughWss.close();
+	});
+
+	it("a trailing slash is tolerated: /ws/echo also matches /ws/echo/", async () => {
+		// Trailing-slash tolerance is the documented `path-to-regexp` default and
+		// is deliberately kept (only case-sensitivity is overridden). A `/ws/echo/`
+		// upgrade must be claimed by the `/ws/echo` route and yield empty params.
+		const args = paramsRoute("/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		expect(await connectAndReadParams("/ws/echo/")).toEqual({});
+	});
+
 	it("a single named parameter is extracted onto ctx.params", async () => {
 		const args = paramsRoute("/ws/notifications/:userId");
 		await wsMock(args);
