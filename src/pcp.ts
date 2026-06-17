@@ -52,10 +52,19 @@ export function pcpUnescape(value: string): string {
 }
 
 /**
- * Same regex SapPcpWebSocket uses to extract `name:value` pairs from a header
- * line. Captures key and value while honoring backslash escapes.
+ * Extracts the `name:value` pair from a single header line, honoring backslash
+ * escapes (`\\`, `\:`, `\n`) in both halves.
+ *
+ * Anchored with `^...$` so it matches the whole line exactly once. The earlier
+ * unanchored form let `String.match` retry at every offset, which on a long
+ * line with no usable colon degraded to O(n²) backtracking — a ~50 KB header
+ * line blocked the event loop for over a second, and since the middleware
+ * decodes untrusted inbound frames that was a remotely triggerable stall.
+ * Anchoring keeps parsing linear. The whole-line match also means a line whose
+ * value carries an unescaped colon (malformed per spec) is skipped rather than
+ * silently truncated at the stray colon.
  */
-const FIELD_REGEX = /((?:[^:\\]|(?:\\.))+):((?:[^:\\\n]|(?:\\.))*)/;
+const FIELD_REGEX = /^((?:[^:\\\n]|\\.)+):((?:[^:\\\n]|\\.)*)$/;
 
 export interface EncodeOptions {
 	/** Value for `pcp-action`. Defaults to `"MESSAGE"`. */

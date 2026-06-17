@@ -205,4 +205,26 @@ describe("decode", () => {
 		expect(decoded.pcpFields["name"]).toBe("alice");
 		expect(decoded.body).toBe("hello");
 	});
+
+	it("skips a header line whose value carries an unescaped colon", () => {
+		// The field regex matches the whole line, so a value with a stray
+		// (unescaped) colon is malformed and dropped rather than silently
+		// truncated at the colon. An escaped colon (`\:`) still parses.
+		const wire = "pcp-action:X\nbad:a:b\ngood:a\\:b\n\nbody";
+		const result = decode(wire);
+		expect(result.pcpFields["pcp-action"]).toBe("X");
+		expect(result.pcpFields["bad"]).toBeUndefined();
+		expect(result.pcpFields["good"]).toBe("a:b");
+	});
+
+	it("decodes a pathological no-colon header line in linear time", () => {
+		// Regression guard for the O(n²) backtracking the unanchored regex had:
+		// a long header line with no usable colon. Pre-fix a 200 KB line blocked
+		// the event loop for ~88 s; anchored parsing returns in milliseconds, so
+		// simply completing well within the default test timeout proves linearity.
+		const huge = "x".repeat(200_000);
+		const result = decode(`${huge}\n\nbody`);
+		expect(result.pcpFields).toEqual({});
+		expect(result.body).toBe("body");
+	});
 });
