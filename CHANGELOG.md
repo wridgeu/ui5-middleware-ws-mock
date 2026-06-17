@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.5.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.4.1...v0.5.0) (2026-06-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **pcp:** `decode()` now returns `{ fields, body }` instead of `{ pcpFields, body }`. Code calling the exported `decode()` directly must read `.fields`. The `onMessage` `PcpFrame.fields` surface is unchanged.
+
+### Features
+
+* support parametrized mount paths via path-to-regexp ([3094061](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/309406113af73ec51d6105abdde116962f0aa4c3))
+* type ctx.params via a TParams generic and sound RouteParams ([9a0bddd](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/9a0bdddefa940505bf9b3373407919cd20aeea86))
+
+
+### Bug Fixes
+
+* anchor PCP field regex to remove quadratic backtracking (ReDoS) ([dbedad6](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/dbedad68463213009f8daaecb578d96d0a52f5e1))
+* make parametrized mountPath matching case-sensitive ([bf4bf3c](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/bf4bf3c1ef524fbb307de64388d306a425d2b598))
+* **pcp:** anchor field regex (ReDoS) + unify decoded field map under `fields` ([04dc712](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/04dc712a61ccf970a57cdcf34ee3d97b33e206c3))
+
+
+### Code Refactoring
+
+* collapse duplicated return literals in loadHandler/createContext ([173af1a](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/173af1a380a18f139eecd87e8d256e0e1d19b29f))
+* **pcp:** unify the decoded field map under `fields` ([4b03b6d](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/4b03b6db7aab9591463dd2951e0c0f6b596c7bf5))
+
 ## [0.4.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.4.0...v0.4.1) (2026-06-14)
 
 
