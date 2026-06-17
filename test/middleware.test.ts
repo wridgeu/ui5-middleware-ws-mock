@@ -8,6 +8,7 @@ import {
 	resetHookCapture,
 	setHookCapture,
 	createMiddlewareUtil,
+	expectFallThrough,
 } from "./helpers/server.js";
 import { createCapturedLogger } from "./helpers/logger.js";
 import { waitForLog, waitForMessages, waitForOpen } from "./helpers/wait.js";
@@ -533,25 +534,8 @@ describe("ws-mock middleware: routing, negotiation, and lifecycle", () => {
 		fireHook(serverHandle.server);
 
 		// Stand-in for a coexisting middleware (e.g. livereload's WS channel):
-		// a second upgrade listener that completes the handshake for any path
-		// ws-mock didn't claim. If ws-mock falls through cleanly, this listener
-		// observes the upgrade and the test's fallthroughOccurred Promise
-		// resolves.
-		const fallthroughWss = new WebSocketServer({ noServer: true });
-		let fallthroughResolve: ((path: string) => void) | null = null;
-		const fallthroughOccurred = new Promise<string>((resolve) => {
-			fallthroughResolve = resolve;
-		});
-		serverHandle.server.on("upgrade", (req, socket, head) => {
-			// Only react to the unrelated path; the matched routes are already
-			// handled synchronously by ws-mock's listener.
-			const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-			if (pathname !== "/ws/c") return;
-			fallthroughWss.handleUpgrade(req, socket, head, (ws) => {
-				fallthroughResolve?.(pathname);
-				ws.close();
-			});
-		});
+		// it completes the handshake for any path ws-mock didn't claim.
+		const fallThrough = expectFallThrough(serverHandle.server, "/ws/c");
 
 		// Route /ws/a accepts (handled by ws-mock).
 		const wsA = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/a`);
@@ -563,10 +547,10 @@ describe("ws-mock middleware: routing, negotiation, and lifecycle", () => {
 		// and then closes cleanly.
 		const wsC = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/c`);
 		await waitForOpen(wsC);
-		const observedPath = await fallthroughOccurred;
+		const observedPath = await fallThrough.occurred;
 		expect(observedPath).toBe("/ws/c");
 		wsC.close();
-		fallthroughWss.close();
+		fallThrough.close();
 
 		// Per-route connect log; the startup banner's "/ws/a" mention alone
 		// would still pass even if isolation were broken.
@@ -682,25 +666,13 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 		await wsMock(args);
 		fireHook(serverHandle.server);
 
-		const fallthroughWss = new WebSocketServer({ noServer: true });
-		let fallthroughResolve: ((path: string) => void) | null = null;
-		const fallthroughOccurred = new Promise<string>((resolve) => {
-			fallthroughResolve = resolve;
-		});
-		serverHandle.server.on("upgrade", (req, socket, head) => {
-			const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-			if (pathname !== "/WS/ECHO") return;
-			fallthroughWss.handleUpgrade(req, socket, head, (ws) => {
-				fallthroughResolve?.(pathname);
-				ws.close();
-			});
-		});
+		const fallThrough = expectFallThrough(serverHandle.server, "/WS/ECHO");
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/WS/ECHO`);
 		await waitForOpen(ws);
-		expect(await fallthroughOccurred).toBe("/WS/ECHO");
+		expect(await fallThrough.occurred).toBe("/WS/ECHO");
 		ws.close();
-		fallthroughWss.close();
+		fallThrough.close();
 	});
 
 	it("a trailing slash is tolerated: /ws/echo also matches /ws/echo/", async () => {
@@ -788,25 +760,13 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 		// A coexisting upgrade listener (stand-in for another middleware) that
 		// completes the handshake for the unmatched path. If ws-mock falls
 		// through cleanly, this listener observes the upgrade.
-		const fallthroughWss = new WebSocketServer({ noServer: true });
-		let fallthroughResolve: ((path: string) => void) | null = null;
-		const fallthroughOccurred = new Promise<string>((resolve) => {
-			fallthroughResolve = resolve;
-		});
-		serverHandle.server.on("upgrade", (req, socket, head) => {
-			const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-			if (pathname !== "/ws/unrelated") return;
-			fallthroughWss.handleUpgrade(req, socket, head, (ws) => {
-				fallthroughResolve?.(pathname);
-				ws.close();
-			});
-		});
+		const fallThrough = expectFallThrough(serverHandle.server, "/ws/unrelated");
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/unrelated`);
 		await waitForOpen(ws);
-		expect(await fallthroughOccurred).toBe("/ws/unrelated");
+		expect(await fallThrough.occurred).toBe("/ws/unrelated");
 		ws.close();
-		fallthroughWss.close();
+		fallThrough.close();
 	});
 
 	it("a malformed percent-encoded pathname is skipped without crashing (logs verbose, falls through)", async () => {
@@ -852,25 +812,13 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 		// ...and at upgrade time the disabled route is skipped by matchRoute, so
 		// a connection falls through to other middleware rather than being claimed
 		// (or crashing). A coexisting listener stands in for that other middleware.
-		const fallthroughWss = new WebSocketServer({ noServer: true });
-		let fallthroughResolve: ((path: string) => void) | null = null;
-		const fallthroughOccurred = new Promise<string>((resolve) => {
-			fallthroughResolve = resolve;
-		});
-		serverHandle.server.on("upgrade", (req, socket, head) => {
-			const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-			if (pathname !== "/ws/anything") return;
-			fallthroughWss.handleUpgrade(req, socket, head, (ws) => {
-				fallthroughResolve?.(pathname);
-				ws.close();
-			});
-		});
+		const fallThrough = expectFallThrough(serverHandle.server, "/ws/anything");
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/anything`);
 		await waitForOpen(ws);
-		expect(await fallthroughOccurred).toBe("/ws/anything");
+		expect(await fallThrough.occurred).toBe("/ws/anything");
 		ws.close();
-		fallthroughWss.close();
+		fallThrough.close();
 	});
 
 	it("logs the matched pathname and extracted params on the connect line", async () => {

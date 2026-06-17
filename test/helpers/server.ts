@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { WebSocketServer } from "ws";
 
 type HookCallback = (args: { server: Server; app?: unknown; options?: unknown }) => void;
 
@@ -41,6 +42,45 @@ export function fireHook(server: Server): void {
 
 export function resetHookCapture(): void {
 	capturedHookCallback = null;
+}
+
+/**
+ * Stands in for a coexisting upgrade listener (another middleware, e.g.
+ * livereload's WS channel). Attaches a second `'upgrade'` listener that
+ * completes the handshake only for `pathname`; if ws-mock falls through
+ * cleanly on an upgrade it did not claim, this listener observes it and
+ * `occurred` resolves with the pathname. Call `close()` in the test to detach
+ * the listener and shut its `WebSocketServer` down.
+ */
+export function expectFallThrough(
+	server: Server,
+	pathname: string,
+): { occurred: Promise<string>; close: () => void } {
+	const wss = new WebSocketServer({ noServer: true });
+	let resolve!: (path: string) => void;
+	const occurred = new Promise<string>((r) => {
+		resolve = r;
+	});
+	const onUpgrade = (
+		req: import("node:http").IncomingMessage,
+		socket: import("node:stream").Duplex,
+		head: Buffer,
+	): void => {
+		const p = new URL(req.url ?? "/", "http://localhost").pathname;
+		if (p !== pathname) return;
+		wss.handleUpgrade(req, socket, head, (ws) => {
+			resolve(p);
+			ws.close();
+		});
+	};
+	server.on("upgrade", onUpgrade);
+	return {
+		occurred,
+		close: () => {
+			server.off("upgrade", onUpgrade);
+			wss.close();
+		},
+	};
 }
 
 /**
