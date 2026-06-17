@@ -122,9 +122,11 @@ export function encode(options: EncodeOptions = {}): string {
 export interface DecodeResult {
 	/**
 	 * Flat key/value map containing all header fields including `pcp-action`
-	 * and `pcp-body-type` (mirrors what `SapPcpWebSocket` exposes).
+	 * and `pcp-body-type` (mirrors what `SapPcpWebSocket` exposes). This is the
+	 * same shape the middleware hands to `onMessage` as `PcpFrame.fields`, which
+	 * is a type alias of `DecodeResult`.
 	 */
-	pcpFields: Record<string, string>;
+	fields: Record<string, string>;
 	body: string;
 }
 
@@ -132,24 +134,24 @@ export interface DecodeResult {
  * Decode a PCP wire string into its parts.
  *
  * If no header/body separator (LFLF) is present, the input is treated as a
- * body-only message with empty `pcpFields`, matching SapPcpWebSocket's
+ * body-only message with empty `fields`, matching SapPcpWebSocket's
  * fallback behavior.
  */
 export function decode(text: string): DecodeResult {
 	const splitPos = text.indexOf(SEPARATOR);
 	if (splitPos === -1) {
-		return { pcpFields: {}, body: text };
+		return { fields: {}, body: text };
 	}
 	const headerPart = text.substring(0, splitPos);
 	const body = text.substring(splitPos + SEPARATOR.length);
-	const pcpFields: Record<string, string> = {};
+	const fields: Record<string, string> = {};
 	for (const line of headerPart.split("\n")) {
 		const match = line.match(FIELD_REGEX);
 		if (!match) continue;
 		const [, key, value] = match;
 		if (key !== undefined && value !== undefined) {
-			pcpFields[pcpUnescape(key)] = pcpUnescape(value);
+			fields[pcpUnescape(key)] = pcpUnescape(value);
 		}
 	}
-	return { pcpFields, body };
+	return { fields, body };
 }
