@@ -217,14 +217,24 @@ describe("decode", () => {
 		expect(result.fields["good"]).toBe("a:b");
 	});
 
-	it("decodes a pathological no-colon header line in linear time", () => {
-		// Regression guard for the O(n²) backtracking the unanchored regex had:
-		// a long header line with no usable colon. Pre-fix a 200 KB line blocked
-		// the event loop for ~88 s; anchored parsing returns in milliseconds, so
-		// simply completing well within the default test timeout proves linearity.
-		const huge = "x".repeat(200_000);
+	it("decodes a pathological no-colon header line in linear time (ReDoS guard)", () => {
+		// Regression guard for the O(n²) backtracking the unanchored regex had on
+		// a header line with no usable colon. Measured with the old pattern:
+		// 25 KB ~0.4 s, 50 KB ~1.5 s, 100 KB ~6 s, 200 KB ~88 s. Anchored parsing
+		// is linear (this 50 KB case is ~1-2 ms).
+		//
+		// The bound is asserted explicitly rather than relying on vitest's test
+		// timeout: `decode()` is synchronous, so a quadratic regression would
+		// block the event loop for seconds and could slip past the timer-based
+		// timeout and still pass. A 500 ms ceiling sits ~250x above the linear
+		// time yet far below the 1.5 s the old regex took at this size, so it
+		// separates linear from quadratic without flaking on a loaded CI runner.
+		const huge = "x".repeat(50_000);
+		const start = performance.now();
 		const result = decode(`${huge}\n\nbody`);
+		const elapsedMs = performance.now() - start;
 		expect(result.fields).toEqual({});
 		expect(result.body).toBe("body");
+		expect(elapsedMs).toBeLessThan(500);
 	});
 });
