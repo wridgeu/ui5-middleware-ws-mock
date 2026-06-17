@@ -150,45 +150,45 @@ describe("decode", () => {
 	it("parses fields and body separated by LFLF", () => {
 		const wire = "pcp-action:MESSAGE\npcp-body-type:text\naction:PING\n\npayload";
 		const result = decode(wire);
-		expect(result.pcpFields["pcp-action"]).toBe("MESSAGE");
-		expect(result.pcpFields["pcp-body-type"]).toBe("text");
-		expect(result.pcpFields["action"]).toBe("PING");
+		expect(result.fields["pcp-action"]).toBe("MESSAGE");
+		expect(result.fields["pcp-body-type"]).toBe("text");
+		expect(result.fields["action"]).toBe("PING");
 		expect(result.body).toBe("payload");
 	});
 
 	it("falls back to body-only when no separator is present", () => {
 		const result = decode("just-a-body");
-		expect(result.pcpFields).toEqual({});
+		expect(result.fields).toEqual({});
 		expect(result.body).toBe("just-a-body");
 	});
 
 	it("unescapes special characters in field values", () => {
 		const wire = "pcp-action:X\n\\:weird:a\\:b\\nc\n\n";
 		const result = decode(wire);
-		expect(result.pcpFields[":weird"]).toBe("a:b\nc");
+		expect(result.fields[":weird"]).toBe("a:b\nc");
 	});
 
 	it("ignores malformed lines that don't match name:value", () => {
 		const wire = "pcp-action:MESSAGE\nnotafield\nreal:yes\n\nbody";
 		const result = decode(wire);
-		expect(result.pcpFields["pcp-action"]).toBe("MESSAGE");
-		expect(result.pcpFields["real"]).toBe("yes");
-		expect(result.pcpFields["notafield"]).toBeUndefined();
+		expect(result.fields["pcp-action"]).toBe("MESSAGE");
+		expect(result.fields["real"]).toBe("yes");
+		expect(result.fields["notafield"]).toBeUndefined();
 	});
 
 	it("parses fields with empty values", () => {
 		const wire = "pcp-action:X\nempty:\nreal:yes\n\nbody";
 		const result = decode(wire);
-		expect(result.pcpFields["empty"]).toBe("");
-		expect(result.pcpFields["real"]).toBe("yes");
+		expect(result.fields["empty"]).toBe("");
+		expect(result.fields["real"]).toBe("yes");
 		expect(result.body).toBe("body");
 	});
 
 	it("drops empty-key lines without surfacing them as a field", () => {
 		const wire = ":value\nreal:yes\n\nbody";
 		const result = decode(wire);
-		expect(result.pcpFields).toEqual({ real: "yes" });
-		expect(result.pcpFields[""]).toBeUndefined();
+		expect(result.fields).toEqual({ real: "yes" });
+		expect(result.fields[""]).toBeUndefined();
 		expect(result.body).toBe("body");
 	});
 
@@ -201,8 +201,40 @@ describe("decode", () => {
 	it("round-trips encode → decode with custom fields and body", () => {
 		const wire = encode({ action: "EVENT", fields: { name: "alice" }, body: "hello" });
 		const decoded = decode(wire);
-		expect(decoded.pcpFields["pcp-action"]).toBe("EVENT");
-		expect(decoded.pcpFields["name"]).toBe("alice");
+		expect(decoded.fields["pcp-action"]).toBe("EVENT");
+		expect(decoded.fields["name"]).toBe("alice");
 		expect(decoded.body).toBe("hello");
+	});
+
+	it("skips a header line whose value carries an unescaped colon", () => {
+		// The field regex matches the whole line, so a value with a stray
+		// (unescaped) colon is malformed and dropped rather than silently
+		// truncated at the colon. An escaped colon (`\:`) still parses.
+		const wire = "pcp-action:X\nbad:a:b\ngood:a\\:b\n\nbody";
+		const result = decode(wire);
+		expect(result.fields["pcp-action"]).toBe("X");
+		expect(result.fields["bad"]).toBeUndefined();
+		expect(result.fields["good"]).toBe("a:b");
+	});
+
+	it("decodes a pathological no-colon header line in linear time (ReDoS guard)", () => {
+		// Regression guard for the O(n²) backtracking the unanchored regex had on
+		// a header line with no usable colon. Measured with the old pattern:
+		// 25 KB ~0.4 s, 50 KB ~1.5 s, 100 KB ~6 s, 200 KB ~88 s. Anchored parsing
+		// is linear (this 50 KB case is ~1-2 ms).
+		//
+		// The bound is asserted explicitly rather than relying on vitest's test
+		// timeout: `decode()` is synchronous, so a quadratic regression would
+		// block the event loop for seconds and could slip past the timer-based
+		// timeout and still pass. A 500 ms ceiling sits ~250x above the linear
+		// time yet far below the 1.5 s the old regex took at this size, so it
+		// separates linear from quadratic without flaking on a loaded CI runner.
+		const huge = "x".repeat(50_000);
+		const start = performance.now();
+		const result = decode(`${huge}\n\nbody`);
+		const elapsedMs = performance.now() - start;
+		expect(result.fields).toEqual({});
+		expect(result.body).toBe("body");
+		expect(elapsedMs).toBeLessThan(500);
 	});
 });
