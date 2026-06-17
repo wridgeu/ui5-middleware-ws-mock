@@ -237,7 +237,12 @@ export interface WebSocketHandler<TData = Record<string, unknown>> {
 
 export type InboundMessage = string | PcpFrame;
 
-export interface PcpFrame {
+// The decoded PCP frame. `PcpFrame` is a type alias of the `DecodeResult`
+// returned by the standalone `decode()` export, so a frame seen in `onMessage`
+// and one produced by `decode()` share the same `{ fields, body }` shape.
+export type PcpFrame = DecodeResult;
+
+export interface DecodeResult {
 	fields: Record<string, string>; // includes pcp-action, pcp-body-type
 	body: string; // raw body bytes as utf-8
 }
