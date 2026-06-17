@@ -116,8 +116,8 @@ describe("ws-mock middleware: wire layer (plain and PCP)", () => {
 
 		const readyMsgs = await ready;
 		const readyDecoded = decode(readyMsgs[0]!);
-		expect(readyDecoded.pcpFields["pcp-action"]).toBe("MESSAGE");
-		expect(readyDecoded.pcpFields["pcp-body-type"]).toBe("text");
+		expect(readyDecoded.fields["pcp-action"]).toBe("MESSAGE");
+		expect(readyDecoded.fields["pcp-body-type"]).toBe("text");
 		expect(readyDecoded.body).toBe("READY");
 
 		const echoBack = waitForMessages(ws, 1);
@@ -185,20 +185,20 @@ describe("ws-mock middleware: wire layer (plain and PCP)", () => {
 
 		const [helloRaw, welcomeRaw] = await expectTwo;
 		const hello = decode(helloRaw!);
-		expect(hello.pcpFields["pcp-action"]).toBe("MESSAGE");
+		expect(hello.fields["pcp-action"]).toBe("MESSAGE");
 		expect(hello.body).toBe("HELLO");
 
 		const welcome = decode(welcomeRaw!);
-		expect(welcome.pcpFields["pcp-action"]).toBe("WELCOME");
-		expect(welcome.pcpFields["pcp-body-type"]).toBe("text");
-		expect(welcome.pcpFields["sessionId"]).toBe("abc-123");
+		expect(welcome.fields["pcp-action"]).toBe("WELCOME");
+		expect(welcome.fields["pcp-body-type"]).toBe("text");
+		expect(welcome.fields["sessionId"]).toBe("abc-123");
 		expect(welcome.body).toBe("hello, pcp");
 
 		const pong = waitForMessages(ws, 1);
 		ws.send(encode({ body: "PING" }));
 		const [pongRaw] = await pong;
 		const pongFrame = decode(pongRaw!);
-		expect(pongFrame.pcpFields["pcp-action"]).toBe("PONG");
+		expect(pongFrame.fields["pcp-action"]).toBe("PONG");
 		expect(pongFrame.body).toBe("");
 
 		ws.close();

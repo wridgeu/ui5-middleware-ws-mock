@@ -336,8 +336,9 @@ function decodeMessage(raw: string, mode: WebSocketMode, log: WebSocketLog): Inb
 		if (!raw.includes("\n\n")) {
 			log.verbose("malformed PCP frame: missing LFLF separator; treating as body-only");
 		}
-		const { pcpFields, body } = decode(raw);
-		return { fields: pcpFields, body };
+		// `decode()` returns a `DecodeResult`, which `PcpFrame` aliases, so the
+		// decoded frame is returned as-is (no field renaming).
+		return decode(raw);
 	}
 	return raw;
 }

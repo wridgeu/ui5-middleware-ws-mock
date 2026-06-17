@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import type { WebSocket } from "ws";
-import type { EncodeOptions } from "./pcp.js";
+import type { DecodeResult, EncodeOptions } from "./pcp.js";
 
 /**
  * Negotiated wire mode for a connection. `"pcp"` when the client offered
@@ -172,11 +172,12 @@ export interface WebSocketLog {
  * UTF-8 string; the middleware never JSON-parses or otherwise interprets it.
  * Application-defined payload semantics (JSON, base64, line-delimited records,
  * opaque text) are entirely up to the handler.
+ *
+ * This is the exact shape `decode()` returns, so `PcpFrame` is a type alias of
+ * `DecodeResult`: a frame read via `onMessage` and one produced by calling
+ * `decode()` directly expose the same `{ fields, body }` surface.
  */
-export interface PcpFrame {
-	fields: Record<string, string>;
-	body: string;
-}
+export type PcpFrame = DecodeResult;
 
 /**
  * Inbound message handed to `onMessage`. The runtime shape is determined by

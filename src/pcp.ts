@@ -52,10 +52,19 @@ export function pcpUnescape(value: string): string {
 }
 
 /**
- * Same regex SapPcpWebSocket uses to extract `name:value` pairs from a header
- * line. Captures key and value while honoring backslash escapes.
+ * Extracts the `name:value` pair from a single header line, honoring backslash
+ * escapes (`\\`, `\:`, `\n`) in both halves.
+ *
+ * Anchored with `^...$` so it matches the whole line exactly once. The earlier
+ * unanchored form let `String.match` retry at every offset, which on a long
+ * line with no usable colon degraded to O(n²) backtracking — a ~50 KB header
+ * line blocked the event loop for over a second, and since the middleware
+ * decodes untrusted inbound frames that was a remotely triggerable stall.
+ * Anchoring keeps parsing linear. The whole-line match also means a line whose
+ * value carries an unescaped colon (malformed per spec) is skipped rather than
+ * silently truncated at the stray colon.
  */
-const FIELD_REGEX = /((?:[^:\\]|(?:\\.))+):((?:[^:\\\n]|(?:\\.))*)/;
+const FIELD_REGEX = /^((?:[^:\\\n]|\\.)+):((?:[^:\\\n]|\\.)*)$/;
 
 export interface EncodeOptions {
 	/** Value for `pcp-action`. Defaults to `"MESSAGE"`. */
@@ -113,9 +122,11 @@ export function encode(options: EncodeOptions = {}): string {
 export interface DecodeResult {
 	/**
 	 * Flat key/value map containing all header fields including `pcp-action`
-	 * and `pcp-body-type` (mirrors what `SapPcpWebSocket` exposes).
+	 * and `pcp-body-type` (mirrors what `SapPcpWebSocket` exposes). This is the
+	 * same shape the middleware hands to `onMessage` as `PcpFrame.fields`, which
+	 * is a type alias of `DecodeResult`.
 	 */
-	pcpFields: Record<string, string>;
+	fields: Record<string, string>;
 	body: string;
 }
 
@@ -123,24 +134,24 @@ export interface DecodeResult {
  * Decode a PCP wire string into its parts.
  *
  * If no header/body separator (LFLF) is present, the input is treated as a
- * body-only message with empty `pcpFields`, matching SapPcpWebSocket's
+ * body-only message with empty `fields`, matching SapPcpWebSocket's
  * fallback behavior.
  */
 export function decode(text: string): DecodeResult {
 	const splitPos = text.indexOf(SEPARATOR);
 	if (splitPos === -1) {
-		return { pcpFields: {}, body: text };
+		return { fields: {}, body: text };
 	}
 	const headerPart = text.substring(0, splitPos);
 	const body = text.substring(splitPos + SEPARATOR.length);
-	const pcpFields: Record<string, string> = {};
+	const fields: Record<string, string> = {};
 	for (const line of headerPart.split("\n")) {
 		const match = line.match(FIELD_REGEX);
 		if (!match) continue;
 		const [, key, value] = match;
 		if (key !== undefined && value !== undefined) {
-			pcpFields[pcpUnescape(key)] = pcpUnescape(value);
+			fields[pcpUnescape(key)] = pcpUnescape(value);
 		}
 	}
-	return { pcpFields, body };
+	return { fields, body };
 }
