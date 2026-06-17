@@ -126,16 +126,26 @@ describe("ctx.params", () => {
 	it("is the public RouteParams record on every branch", () => {
 		// `RouteParams` is the percent-decoded string/string[] map surfaced on
 		// `ctx.params`; it is re-exported from the package root so consumers can
-		// name it. The shape assertion guards the definition itself.
-		expectTypeOf<RouteParams>().toEqualTypeOf<Record<string, string | string[]>>();
+		// name it. The shape assertion guards the definition itself. It is
+		// `Partial` because optional segments that did not match contribute no key,
+		// so the runtime can hand back `{}` — see the indexed-access check below.
+		expectTypeOf<RouteParams>().toEqualTypeOf<Partial<Record<string, string | string[]>>>();
 		expectTypeOf<WebSocketContext["params"]>().toEqualTypeOf<RouteParams>();
 		expectTypeOf<PlainWebSocketContext["params"]>().toEqualTypeOf<RouteParams>();
 		expectTypeOf<PcpWebSocketContext["params"]>().toEqualTypeOf<RouteParams>();
 	});
 
-	it("is independent of TData and survives narrowing on ctx.mode", () => {
-		// `params` is a plain field (not parameterized by TData), so it stays
-		// `RouteParams` after both the `<TData>` instantiation and the
+	it("an indexed read includes undefined so absent optional params are not assumed present", () => {
+		// The soundness guard: a connect to `/ws/feed` for `/ws/feed{/:topic}`
+		// yields `{}` at runtime, so `ctx.params.topic` must be typed as possibly
+		// `undefined`. If `RouteParams` ever drops `Partial`, this fails and the
+		// type once again lies about absent optional params (the F3 regression).
+		expectTypeOf<RouteParams[string]>().toEqualTypeOf<string | string[] | undefined>();
+	});
+
+	it("survives narrowing on ctx.mode and defaults to RouteParams when only TData is given", () => {
+		// With only `TData` supplied, `TParams` defaults to `RouteParams`, and it
+		// stays `RouteParams` after both the instantiation and the
 		// `if (ctx.mode === "pcp")` narrow.
 		type Narrowed<M extends WebSocketContext["mode"]> = Extract<
 			WebSocketContext<CounterState>,
@@ -144,5 +154,57 @@ describe("ctx.params", () => {
 		expectTypeOf<WebSocketContext<CounterState>["params"]>().toEqualTypeOf<RouteParams>();
 		expectTypeOf<Narrowed<"pcp">["params"]>().toEqualTypeOf<RouteParams>();
 		expectTypeOf<Narrowed<"plain">["params"]>().toEqualTypeOf<RouteParams>();
+	});
+});
+
+describe("ctx.params typed via TParams", () => {
+	interface NotificationParams {
+		userId: string;
+	}
+
+	it("the second type argument flows a precise shape into ctx.params", () => {
+		// `WebSocketContext<TData, TParams>` types `ctx.params` as `TParams`, so a
+		// named segment reads back as a plain `string` with no guard or `undefined`.
+		expectTypeOf<
+			WebSocketContext<Record<string, unknown>, NotificationParams>["params"]
+		>().toEqualTypeOf<NotificationParams>();
+		expectTypeOf<
+			WebSocketContext<Record<string, unknown>, NotificationParams>["params"]["userId"]
+		>().toEqualTypeOf<string>();
+	});
+
+	it("is preserved on both branches and through the ctx.mode narrow", () => {
+		expectTypeOf<
+			PlainWebSocketContext<Record<string, unknown>, NotificationParams>["params"]
+		>().toEqualTypeOf<NotificationParams>();
+		expectTypeOf<
+			PcpWebSocketContext<Record<string, unknown>, NotificationParams>["params"]
+		>().toEqualTypeOf<NotificationParams>();
+
+		type Narrowed<M extends WebSocketContext["mode"]> = Extract<
+			WebSocketContext<Record<string, unknown>, NotificationParams>,
+			{ mode: M }
+		>;
+		expectTypeOf<Narrowed<"pcp">["params"]>().toEqualTypeOf<NotificationParams>();
+		expectTypeOf<Narrowed<"plain">["params"]>().toEqualTypeOf<NotificationParams>();
+	});
+
+	it("flows TParams from WebSocketHandler into every callback's ctx.params", () => {
+		// The DX guard: if `TParams` were dropped from any callback's context, the
+		// callback's `ctx.params` would fall back to the loose `RouteParams` and
+		// this assertion would fail.
+		type Handler = WebSocketHandler<CounterState, NotificationParams>;
+		expectTypeOf<NonNullable<Handler["onConnect"]>>()
+			.parameter(0)
+			.toEqualTypeOf<WebSocketContext<CounterState, NotificationParams>>();
+		expectTypeOf<NonNullable<Handler["onMessage"]>>()
+			.parameter(0)
+			.toEqualTypeOf<WebSocketContext<CounterState, NotificationParams>>();
+		expectTypeOf<NonNullable<Handler["onClose"]>>()
+			.parameter(0)
+			.toEqualTypeOf<WebSocketContext<CounterState, NotificationParams>>();
+		expectTypeOf<NonNullable<Handler["onError"]>>()
+			.parameter(0)
+			.toEqualTypeOf<WebSocketContext<CounterState, NotificationParams>>();
 	});
 });

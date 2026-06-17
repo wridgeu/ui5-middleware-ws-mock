@@ -17,7 +17,7 @@ export type WebSocketMode = "pcp" | "plain";
  * `TData` types the per-connection `data` bag; it defaults to the loose
  * `Record<string, unknown>` and is threaded through from `WebSocketHandler`.
  */
-interface WebSocketContextBase<TData = Record<string, unknown>> {
+interface WebSocketContextBase<TData = Record<string, unknown>, TParams = RouteParams> {
 	/** Raw `ws` instance. Required for any framing the helper methods do not cover. */
 	ws: WebSocket;
 	/** The HTTP upgrade request. Useful for `url`, `headers`, and `socket.remoteAddress`. */
@@ -34,8 +34,16 @@ interface WebSocketContextBase<TData = Record<string, unknown>> {
 	 * For a literal `mountPath` (no parameters) this is an empty object. The
 	 * same object is shared across every callback for the connection, mirroring
 	 * `ctx.data`.
+	 *
+	 * `TParams` types this bag. It defaults to the loose `RouteParams`
+	 * (`Partial<Record<string, string | string[]>>`), so an indexed read is
+	 * `string | string[] | undefined` and must be narrowed. Supply a shape to
+	 * read params without a guard — `WebSocketHandler<TData, { userId: string }>`
+	 * flows `{ userId: string }` into `ctx.params.userId` here. Like `ctx.data`,
+	 * this is an assertion about what the route's pattern captures: the middleware
+	 * does not verify it, so declare optional segments as optional fields.
 	 */
-	params: RouteParams;
+	params: TParams;
 	/** Scoped logger, prefixed with `[ws-mock:<mountPath>]`. */
 	log: WebSocketLog;
 	/**
@@ -72,7 +80,8 @@ interface WebSocketContextBase<TData = Record<string, unknown>> {
  */
 export interface PlainWebSocketContext<
 	TData = Record<string, unknown>,
-> extends WebSocketContextBase<TData> {
+	TParams = RouteParams,
+> extends WebSocketContextBase<TData, TParams> {
 	mode: "plain";
 	/** Write `message` to the wire unchanged. */
 	send: (message: string) => void;
@@ -97,7 +106,8 @@ export interface PlainWebSocketContext<
  */
 export interface PcpWebSocketContext<
 	TData = Record<string, unknown>,
-> extends WebSocketContextBase<TData> {
+	TParams = RouteParams,
+> extends WebSocketContextBase<TData, TParams> {
 	mode: "pcp";
 	/**
 	 * Send a PCP frame.
@@ -119,14 +129,16 @@ export interface PcpWebSocketContext<
  * server and client negotiated. It does not change for the lifetime of the
  * connection.
  *
- * `TData` types the per-connection `data` bag (see `WebSocketContextBase`) and
- * is preserved when narrowing on `mode`: `WebSocketContext<TData>` narrows to
- * `PcpWebSocketContext<TData>` / `PlainWebSocketContext<TData>`, so `ctx.data`
- * stays typed inside an `if (ctx.mode === "pcp")` branch.
+ * `TData` types the per-connection `data` bag and `TParams` types the
+ * `ctx.params` bag (both see `WebSocketContextBase`). Both are preserved when
+ * narrowing on `mode`: `WebSocketContext<TData, TParams>` narrows to
+ * `PcpWebSocketContext<TData, TParams>` / `PlainWebSocketContext<TData, TParams>`,
+ * so `ctx.data` and `ctx.params` stay typed inside an `if (ctx.mode === "pcp")`
+ * branch.
  */
-export type WebSocketContext<TData = Record<string, unknown>> =
-	| PlainWebSocketContext<TData>
-	| PcpWebSocketContext<TData>;
+export type WebSocketContext<TData = Record<string, unknown>, TParams = RouteParams> =
+	| PlainWebSocketContext<TData, TParams>
+	| PcpWebSocketContext<TData, TParams>;
 
 /**
  * Scoped logger handed to every handler callback through `ctx.log`. Each call
@@ -196,14 +208,22 @@ export type InboundMessage = string | PcpFrame;
  * defaults to the loose `Record<string, unknown>`; supply a shape
  * (`WebSocketHandler<{ count: number }>`) to read `ctx.data` without a cast.
  * See `WebSocketContextBase.data` for the lifetime and soundness notes.
+ *
+ * `TParams` (the second type argument) types `ctx.params` the same way. It
+ * defaults to the loose `RouteParams`, whose indexed reads are
+ * `string | string[] | undefined`; supply the route's capture shape to read
+ * params without narrowing — e.g. `WebSocketHandler<MyData, { userId: string }>`
+ * makes `ctx.params.userId` a `string`. To type params but not data, pass the
+ * default for `TData` first: `WebSocketHandler<Record<string, unknown>,
+ * { userId: string }>`. See `WebSocketContextBase.params`.
  */
-export interface WebSocketHandler<TData = Record<string, unknown>> {
+export interface WebSocketHandler<TData = Record<string, unknown>, TParams = RouteParams> {
 	/**
 	 * Called once per successful WebSocket upgrade, after subprotocol
 	 * negotiation has settled `ctx.mode`. Typical use: send a HELLO frame or
 	 * seed `ctx.data` with the connection's initial state.
 	 */
-	onConnect?: (ctx: WebSocketContext<TData>) => void | Promise<void>;
+	onConnect?: (ctx: WebSocketContext<TData, TParams>) => void | Promise<void>;
 	/**
 	 * Called for every inbound frame on this connection. `message` is the raw
 	 * frame string in plain mode and a decoded `PcpFrame` in PCP mode;
@@ -212,12 +232,19 @@ export interface WebSocketHandler<TData = Record<string, unknown>> {
 	 * Frames that arrive with no `onMessage` defined are dropped with a
 	 * `verbose` log.
 	 */
-	onMessage?: (ctx: WebSocketContext<TData>, message: InboundMessage) => void | Promise<void>;
+	onMessage?: (
+		ctx: WebSocketContext<TData, TParams>,
+		message: InboundMessage,
+	) => void | Promise<void>;
 	/**
 	 * Called after the WebSocket is closed (either peer). `code` is the close
 	 * code, `reason` is the utf-8 reason string (empty when none was sent).
 	 */
-	onClose?: (ctx: WebSocketContext<TData>, code: number, reason: string) => void | Promise<void>;
+	onClose?: (
+		ctx: WebSocketContext<TData, TParams>,
+		code: number,
+		reason: string,
+	) => void | Promise<void>;
 	/**
 	 * Called when the middleware catches an error from this connection:
 	 *
@@ -232,7 +259,7 @@ export interface WebSocketHandler<TData = Record<string, unknown>> {
 	 * explicitly. Throws or rejections from `onError` itself are logged at
 	 * `error` and do not re-enter the hook.
 	 */
-	onError?: (ctx: WebSocketContext<TData>, err: unknown) => void | Promise<void>;
+	onError?: (ctx: WebSocketContext<TData, TParams>, err: unknown) => void | Promise<void>;
 }
 
 /**
@@ -240,8 +267,15 @@ export interface WebSocketHandler<TData = Record<string, unknown>> {
  * Named segments resolve to a `string`; wildcards (`*name`) resolve to a
  * `string[]`. Values are already percent-decoded. See `WebSocketRoute.mountPath`
  * for the supported pattern syntax.
+ *
+ * `Partial` is load-bearing: an optional segment that did not match contributes
+ * no key (a connect to `/ws/feed` for `/ws/feed{/:topic}` yields `{}`), so an
+ * indexed read is `string | string[] | undefined`. This mirrors
+ * `path-to-regexp`'s own `ParamData` and forces callers to handle the
+ * absent-optional case the runtime can actually produce, rather than trusting a
+ * key that may not be there.
  */
-export type RouteParams = Record<string, string | string[]>;
+export type RouteParams = Partial<Record<string, string | string[]>>;
 
 /** Shape of a single entry in the middleware's `configuration.routes` list. */
 export interface WebSocketRoute {
