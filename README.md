@@ -2,9 +2,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://www.npmjs.com/package/ui5-middleware-ws-mock"><img src="https://img.shields.io/npm/v/ui5-middleware-ws-mock.svg" alt="npm"></a>
   <a href="https://npmx.dev/package/ui5-middleware-ws-mock"><img src="https://img.shields.io/npm/v/ui5-middleware-ws-mock?label=npmx.dev&color=0a0a0a" alt="npmx"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%E2%89%A522.18-green.svg" alt="Node"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%E2%89%A522.20-green.svg" alt="Node"></a>
   <a href="https://ui5.github.io/cli/stable/pages/Configuration/"><img src="https://img.shields.io/badge/UI5%20Tooling%20specVersion-4.0-blue.svg" alt="UI5 Tooling specVersion"></a>
-  <a href="https://www.npmjs.com/package/@ui5/cli"><img src="https://img.shields.io/badge/%40ui5%2Fcli-%E2%89%A54.0.0-blue.svg" alt="UI5 CLI"></a>
+  <a href="https://www.npmjs.com/package/@ui5/cli"><img src="https://img.shields.io/badge/%40ui5%2Fcli-4.x%20%7C%205.x-blue.svg" alt="UI5 CLI 4.x | 5.x"></a>
 </p>
 
 <h1 align="center">ui5-middleware-ws-mock</h1>
@@ -38,16 +38,21 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 
 ## Prerequisites
 
-- **Node.js** ≥ 22.18 (declared in `engines`; required for the native TypeScript type stripping the handler loader relies on when handlers are authored in TS).
-- **`@ui5/cli`** ≥ 4.0.0 (this middleware declares `specVersion: "4.0"`; older CLI versions reject the extension).
+- **Node.js** `^22.20.0 || >=24.0.0` (declared in `engines`). The floor is required both for the native TypeScript type stripping the handler loader relies on when handlers are authored in TS, and to match `@ui5/cli` 5's own engine requirement.
+- **`@ui5/cli`** 4.x **or** 5.x. This middleware declares `specVersion: "4.0"`, which both majors accept, so a single package line runs on either (validated against `@ui5/cli` 5 alpha; see [Version compatibility](#version-compatibility)). Older CLI versions (< 4.0.0) reject the extension.
 - A UI5 project of `kind: project`, `type: application` / `library` / `themeLibrary`. `Module`-type projects need `configuration.rootPath` because they have no single source path.
 - TypeScript is not required to use the middleware; handlers may be plain `.js` files. If you write handlers in TypeScript, Node ≥ 22.18 runs them directly via native type stripping; no `ts-node` step is needed.
 
 ## Version compatibility
 
-| `ui5-middleware-ws-mock` | UI5 Tooling specVersion | `@ui5/cli` | Node      | TypeScript (optional) |
-| ------------------------ | ----------------------- | ---------- | --------- | --------------------- |
-| `0.x`                    | `4.0`                   | `≥ 4.0.0`  | `≥ 22.18` | `~ 6.0`               |
+| `ui5-middleware-ws-mock` | UI5 Tooling specVersion | `@ui5/cli`     | Node                     | TypeScript (optional) |
+| ------------------------ | ----------------------- | -------------- | ------------------------ | --------------------- |
+| `≤ 0.5.x`                | `4.0`                   | `4.x`          | `≥ 22.18`                | `~ 6.0`               |
+| `≥ 0.6.0`                | `4.0`                   | `4.x` \| `5.x` | `^22.20.0 \|\| >=24.0.0` | `~ 6.0`               |
+
+**UI5 Tooling 4 & 5.** From `0.6.0` the middleware supports `@ui5/cli` **4.x and 5.x** from a single package line. The `specVersion` stays `4.0` because both majors accept it, and the middleware declares no `@ui5/*` dependency (the host `ui5 serve` process provides the runtime), so nothing pins it to one major. Support for `@ui5/cli` 5 is validated end-to-end against the `5.0.0-alpha` releases by [`test/e2e`](test/e2e) (`npm run validate:v5`); see [`docs/specs/2026-07-17-ui5-tooling-v5-support.md`](docs/specs/2026-07-17-ui5-tooling-v5-support.md) for the full compatibility findings.
+
+**The one breaking change in `0.6.0`** is the Node floor rising from `≥ 22.18` to `^22.20.0 || >=24.0.0`, to match `@ui5/cli` 5's own engine requirement. Consumers on `@ui5/cli` 4.x and Node 22.18/22.19 who cannot raise Node should stay on `0.5.x`; the `0.5.x` line remains the `@ui5/cli` 4.x / Node ≥ 22.18 baseline.
 
 Pre-1.0 the public types and the middleware configuration shape may change in minor releases. Note that for `0.x` versions npm semver treats the minor as the major: `^0.3.0` and `~0.3.0` resolve to the same range (`>=0.3.0 <0.4.0`), so either form pins to the current minor.
 

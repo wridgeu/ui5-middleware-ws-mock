@@ -1,0 +1,45 @@
+name: V5 Validation
+
+# Boots a real `ui5 serve` under the @ui5/cli 5 alpha with the packed middleware
+# and asserts the WebSocket wire end-to-end. The unit suite mocks the tooling
+# harness; this job proves the runtime contract against the actual CLI.
+#
+# While @ui5/cli 5 is a moving alpha this job is informational (continue-on-error),
+# so a churny pre-release does not block PRs. Flip it to required once v5 reaches
+# a stable release and the default UI5_CLI_VERSION is bumped accordingly.
+
+on:
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+    schedule:
+        # Weekly, so a new @ui5/cli 5 alpha that breaks the contract surfaces on
+        # its own rather than waiting for the next PR.
+        - cron: "0 6 * * 1"
+
+concurrency:
+    group: v5-validation-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    validate-v5:
+        continue-on-error: true
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest]
+                node: [22, 24]
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+              with:
+                  node-version: ${{ matrix.node }}
+                  cache: npm
+
+            - run: npm ci
+
+            - name: Validate against @ui5/cli 5 (alpha)
+              run: npm run validate:v5
