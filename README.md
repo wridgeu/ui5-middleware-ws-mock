@@ -2,9 +2,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://www.npmjs.com/package/ui5-middleware-ws-mock"><img src="https://img.shields.io/npm/v/ui5-middleware-ws-mock.svg" alt="npm"></a>
   <a href="https://npmx.dev/package/ui5-middleware-ws-mock"><img src="https://img.shields.io/npm/v/ui5-middleware-ws-mock?label=npmx.dev&color=0a0a0a" alt="npmx"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%E2%89%A522.18-green.svg" alt="Node"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%E2%89%A522.20-green.svg" alt="Node"></a>
   <a href="https://ui5.github.io/cli/stable/pages/Configuration/"><img src="https://img.shields.io/badge/UI5%20Tooling%20specVersion-4.0-blue.svg" alt="UI5 Tooling specVersion"></a>
-  <a href="https://www.npmjs.com/package/@ui5/cli"><img src="https://img.shields.io/badge/%40ui5%2Fcli-%E2%89%A54.0.0-blue.svg" alt="UI5 CLI"></a>
+  <a href="https://www.npmjs.com/package/@ui5/cli"><img src="https://img.shields.io/badge/%40ui5%2Fcli-4.x%20%7C%205.x-blue.svg" alt="@ui5/cli 4.x | 5.x"></a>
 </p>
 
 <h1 align="center">ui5-middleware-ws-mock</h1>
@@ -38,16 +38,21 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 
 ## Prerequisites
 
-- **Node.js** ≥ 22.18 (declared in `engines`; required for the native TypeScript type stripping the handler loader relies on when handlers are authored in TS).
-- **`@ui5/cli`** ≥ 4.0.0 (this middleware declares `specVersion: "4.0"`; older CLI versions reject the extension).
+- **Node.js** `^22.20.0 || >=24.0.0` (declared in `engines`). The floor is required both for the native TypeScript type stripping the handler loader relies on when handlers are authored in TS, and to match `@ui5/cli` 5's own engine requirement.
+- **`@ui5/cli`** 4.x **or** 5.x. This middleware declares `specVersion: "4.0"`, which both majors accept, so a single package line runs on either (validated against `@ui5/cli` 5 alpha; see [Version compatibility](#version-compatibility)). Older CLI versions (< 4.0.0) reject the extension.
 - A UI5 project of `kind: project`, `type: application` / `library` / `themeLibrary`. `Module`-type projects need `configuration.rootPath` because they have no single source path.
 - TypeScript is not required to use the middleware; handlers may be plain `.js` files. If you write handlers in TypeScript, Node ≥ 22.18 runs them directly via native type stripping; no `ts-node` step is needed.
 
 ## Version compatibility
 
-| `ui5-middleware-ws-mock` | UI5 Tooling specVersion | `@ui5/cli` | Node      | TypeScript (optional) |
-| ------------------------ | ----------------------- | ---------- | --------- | --------------------- |
-| `0.x`                    | `4.0`                   | `≥ 4.0.0`  | `≥ 22.18` | `~ 6.0`               |
+| `ui5-middleware-ws-mock` | UI5 Tooling specVersion | `@ui5/cli`     | Node                     | TypeScript (optional) |
+| ------------------------ | ----------------------- | -------------- | ------------------------ | --------------------- |
+| `≤ 0.5.x`                | `4.0`                   | `4.x`          | `≥ 22.18`                | `~ 6.0`               |
+| `≥ 0.6.0`                | `4.0`                   | `4.x` \| `5.x` | `^22.20.0 \|\| >=24.0.0` | `~ 6.0`               |
+
+**UI5 Tooling 4 & 5.** From `0.6.0` the middleware supports `@ui5/cli` **4.x and 5.x** from a single package line. The `specVersion` stays `4.0` because both majors accept it, and the middleware declares no `@ui5/*` dependency (the host `ui5 serve` process provides the runtime), so nothing pins it to one major. Support for `@ui5/cli` 5 is validated end-to-end against the `5.0.0-alpha` releases by [`test/e2e`](test/e2e) (`npm run validate:v5`); see [`docs/specs/2026-07-17-ui5-tooling-v5-support.md`](docs/specs/2026-07-17-ui5-tooling-v5-support.md) for the full compatibility findings.
+
+**The one breaking change in `0.6.0`** is the Node floor rising from `≥ 22.18` to `^22.20.0 || >=24.0.0`, to match `@ui5/cli` 5's own engine requirement. Consumers on `@ui5/cli` 4.x and Node 22.18/22.19 who cannot raise Node should stay on `0.5.x`; the `0.5.x` line remains the `@ui5/cli` 4.x / Node ≥ 22.18 baseline.
 
 Pre-1.0 the public types and the middleware configuration shape may change in minor releases. Note that for `0.x` versions npm semver treats the minor as the major: `^0.3.0` and `~0.3.0` resolve to the same range (`>=0.3.0 <0.4.0`), so either form pins to the current minor.
 
@@ -189,7 +194,7 @@ configuration:
 
 ### Parametrized mount paths
 
-`mountPath` is matched against the upgrade request's pathname with [`path-to-regexp`](https://github.com/pillarjs/path-to-regexp) — the same matcher Express 5 uses — so a single route can serve a family of paths and expose the variable parts on `ctx.params`.
+`mountPath` is matched against the upgrade request's pathname with [`path-to-regexp`](https://github.com/pillarjs/path-to-regexp) (the same matcher Express 5 uses), so a single route can serve a family of paths and expose the variable parts on `ctx.params`.
 
 > [!NOTE]
 > This is `path-to-regexp` (Express) syntax, matched against the **server-side pathname**. It is deliberately not UI5's client-side hash-routing syntax (crossroads.js: `{param}`, `:optional:`, `*rest*`), which never reaches the server and applies to a different layer.
@@ -224,12 +229,12 @@ export default handler;
 
 Key points:
 
-- **Named parameters** (`:userId`) capture one path segment and resolve to a `string`. **Wildcards** must be named (`*splat`) and resolve to a `string[]` of the matched segments. **Optional** segments use braces (`{/:topic}`), not a trailing `?`. This is `path-to-regexp` v8 syntax; the legacy bare `*` and `:opt?` forms are rejected — a `mountPath` that fails to compile is logged at `error` on startup and that route is disabled (it never matches).
+- **Named parameters** (`:userId`) capture one path segment and resolve to a `string`. **Wildcards** must be named (`*splat`) and resolve to a `string[]` of the matched segments. **Optional** segments use braces (`{/:topic}`), not a trailing `?`. This is `path-to-regexp` v8 syntax; the legacy bare `*` and `:opt?` forms are rejected. A `mountPath` that fails to compile is logged at `error` on startup and that route is disabled (it never matches).
 - **Values are percent-decoded** (`/ws/u/caf%C3%A9` → `ctx.params.name === "café"`). A pathname whose encoding cannot be decoded (e.g. a stray `%ZZ`) is treated as no match and left for other middleware, with a `verbose` log line.
 - **Matching is case-sensitive, trailing slash optional.** `/ws/echo` matches `/ws/echo` and `/ws/echo/` but not `/WS/ECHO` (a differently cased pathname falls through to other middleware). This mirrors the pre-parametrized exact-match behavior; `path-to-regexp`'s case-insensitive default is overridden.
 - **First match wins.** Routes are tried in declaration order, so list specific patterns before broader ones (`/ws/exact` before `/ws/:kind`). A pathname that matches no route is silently passed through, exactly as a literal non-match is.
 - **Startup warnings.** At startup the middleware inspects the route table and warns (without disabling the route) about three otherwise-silent mistakes: a route shadowed by an earlier pattern (unreachable under first-match-wins), a `mountPath` with no leading static segment (it matches from the URL root and steals upgrades from other middleware such as livereload), and a duplicate parameter name (only the last occurrence is captured). The matched pathname and extracted params are also logged on each `connect` line.
-- **Typing `ctx.params`.** By default it is a `Partial<Record<string, string | string[]>>` (re-exported as `RouteParams`): a named segment is a `string`, a wildcard is a `string[]`, and an optional segment that did not match contributes no key. So an indexed read is `string | string[] | undefined` — narrow before using a value as a string, e.g. `if (typeof ctx.params.userId === "string") { ... }`. For a literal `mountPath` it is `{}`, and reading a missing key just yields `undefined`. To skip the narrowing, declare the route's capture shape as the **second** type argument of `WebSocketHandler` (the first stays `TData`): `WebSocketHandler<Record<string, unknown>, { userId: string }>` makes `ctx.params.userId` a plain `string`. Like `ctx.data`, this is a typed assertion the middleware does not verify, so model optional segments as optional fields (`{ topic?: string }`).
+- **Typing `ctx.params`.** By default it is a `Partial<Record<string, string | string[]>>` (re-exported as `RouteParams`): a named segment is a `string`, a wildcard is a `string[]`, and an optional segment that did not match contributes no key. So an indexed read is `string | string[] | undefined`; narrow before using a value as a string, e.g. `if (typeof ctx.params.userId === "string") { ... }`. For a literal `mountPath` it is `{}`, and reading a missing key just yields `undefined`. To skip the narrowing, declare the route's capture shape as the **second** type argument of `WebSocketHandler` (the first stays `TData`): `WebSocketHandler<Record<string, unknown>, { userId: string }>` makes `ctx.params.userId` a plain `string`. Like `ctx.data`, this is a typed assertion the middleware does not verify, so model optional segments as optional fields (`{ topic?: string }`).
 
 ## Wire layer: WebSocket and PCP
 
@@ -316,17 +321,17 @@ All callbacks are optional. A handler that only implements `onMessage` is valid;
 
 `WebSocketContext` is a discriminated union on `mode` (defined in [`src/types.ts`](src/types.ts)). Every callback receives one of the two members (`PlainWebSocketContext` or `PcpWebSocketContext`, both re-exported from the package root). TypeScript narrows the union on `ctx.mode === "pcp"` / `"plain"`, which unlocks the appropriate `send` signature:
 
-| Field       | Type                                                                                    | Description                                                                                                                                                                                                                                                                                                                                                                        |
-| ----------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ws`        | `WebSocket`                                                                             | Raw `ws` instance. Required for any framing the helper methods do not cover.                                                                                                                                                                                                                                                                                                       |
-| `req`       | `http.IncomingMessage`                                                                  | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                                                                                                                                                                                                                                                     |
-| `params`    | `RouteParams` (= `Partial<Record<string, string \| string[]>>`)                         | Parameters extracted from `mountPath` at upgrade time, percent-decoded. Named segments are `string`; wildcards are `string[]`; unmatched optionals are absent, so an indexed read is `string \| string[] \| undefined`. Empty `{}` for a literal `mountPath`. Type it precisely via `WebSocketHandler<TData, TParams>`. See [Parametrized mount paths](#parametrized-mount-paths). |
-| `mode`      | `"pcp" \| "plain"`                                                                      | Negotiated at the handshake; fixed for the lifetime of the connection. Discriminant for the union; narrow on it to interpret `message` and choose `send`.                                                                                                                                                                                                                          |
-| `log`       | `WebSocketLog`                                                                          | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.                                                                                                                                                                                                                              |
-| `data`      | `TData` (default `Record<string, unknown>`)                                             | Per-connection scratch bag, shared by reference across every callback for one connection and discarded when it ends. Type it via `WebSocketHandler<TData>`. See [Stateful per-connection handlers](#stateful-per-connection-handlers).                                                                                                                                             |
-| `send`      | plain: `(message: string) => void`<br>pcp: `(message: string \| EncodeOptions) => void` | Send a frame. Plain mode writes the bytes through `ws.send` unchanged. PCP mode accepts a string (wrapped in a default frame) or `EncodeOptions`. See below.                                                                                                                                                                                                                       |
-| `close`     | `(code?, reason?) => void`                                                              | Close the connection with optional code (default 1000) and reason.                                                                                                                                                                                                                                                                                                                 |
-| `terminate` | `() => void`                                                                            | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                                                                                                                                                                                                                                                     |
+| Field       | Type                                                                                    | Description                                                                                                                                                                                                                                                                                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ws`        | `WebSocket`                                                                             | Raw `ws` instance. Required for any framing the helper methods do not cover.                                                                                                                                                                                                                                                                                             |
+| `req`       | `http.IncomingMessage`                                                                  | The HTTP upgrade request. Useful for `url`, `headers`, `socket.remoteAddress`.                                                                                                                                                                                                                                                                                           |
+| `params`    | `RouteParams` (= `Partial<Record<string, string \| string[]>>`)                         | Parameters extracted from `mountPath` at upgrade time, percent-decoded. Named segments are `string`; wildcards are `string[]`; unmatched optionals are absent, so an indexed read is `string \| string[] \| undefined`. Empty `{}` for a literal `mountPath`. Type it via `WebSocketHandler<TData, TParams>`. See [Parametrized mount paths](#parametrized-mount-paths). |
+| `mode`      | `"pcp" \| "plain"`                                                                      | Negotiated at the handshake; fixed for the lifetime of the connection. Discriminant for the union; narrow on it to interpret `message` and choose `send`.                                                                                                                                                                                                                |
+| `log`       | `WebSocketLog`                                                                          | Scoped logger prefixed with `[ws-mock:<mountPath>]`. Methods mirror `@ui5/logger`'s level names: `silly`, `verbose`, `perf`, `info`, `warn`, `error`.                                                                                                                                                                                                                    |
+| `data`      | `TData` (default `Record<string, unknown>`)                                             | Per-connection scratch bag, shared by reference across every callback for one connection and discarded when it ends. Type it via `WebSocketHandler<TData>`. See [Stateful per-connection handlers](#stateful-per-connection-handlers).                                                                                                                                   |
+| `send`      | plain: `(message: string) => void`<br>pcp: `(message: string \| EncodeOptions) => void` | Send a frame. Plain mode writes the bytes through `ws.send` unchanged. PCP mode accepts a string (wrapped in a default frame) or `EncodeOptions`. See below.                                                                                                                                                                                                             |
+| `close`     | `(code?, reason?) => void`                                                              | Close the connection with optional code (default 1000) and reason.                                                                                                                                                                                                                                                                                                       |
+| `terminate` | `() => void`                                                                            | Hard-kill the socket without a close handshake. The client observes code 1006.                                                                                                                                                                                                                                                                                           |
 
 Calling `ctx.send("text")` is legal in either branch because `string` is in both signatures, so call sites that do not need PCP-specific framing do not need to narrow first. Calling `ctx.send({ action: "...", body: "..." })` requires the PCP narrow.
 
@@ -371,7 +376,7 @@ For framing the public encoder cannot express (alternate separator handling, raw
 
 When a route is single-mode by contract (a PCP-only endpoint where any plain client is a bug, for instance), narrowing on `ctx.mode` at every call site adds noise. Two type-safe patterns let you skip the per-call narrow. Both rely on the named branches of the discriminated union (`PlainWebSocketContext` / `PcpWebSocketContext`), which are re-exported from the package root alongside `WebSocketContext`.
 
-**Early-return narrow (recommended).** A single guard at the top of the callback rejects a wrong-mode client and narrows `ctx` for the rest of the function body. Closing the connection is the loud part; a bare `throw` would only log under the handler-invocation wrapper and leave the wrong-mode client connected:
+**Early-return narrow (recommended).** A single guard at the top of the callback rejects a wrong-mode client and narrows `ctx` for the rest of the function body. Closing the connection is what makes the rejection visible; a bare `throw` would only log under the handler-invocation wrapper and leave the wrong-mode client connected:
 
 ```typescript
 import type { WebSocketHandler } from "ui5-middleware-ws-mock";
@@ -430,7 +435,7 @@ Handlers narrow with `typeof message === "string"` (or `ctx.mode === "plain"`) b
 
 ## Writing handlers for custom scenarios
 
-Custom logic lives entirely inside the callbacks the handler provides.
+Custom logic lives inside the callbacks the handler provides.
 
 ### Named-message dispatch ("action routing") in user-land
 
@@ -706,7 +711,7 @@ The middleware follows this pattern. Other libraries that hook `"upgrade"` on th
 
 This coexistence depends on every `mountPath` carrying a leading static segment (`/ws/...`). A pattern with no static prefix (`/{*splat}`, `/:anything`) matches every upgrade path from the URL root, so it claims requests meant for other listeners (livereload's WS channel, for example). The middleware warns about such a pattern at startup but does not refuse it; scope each route under a literal prefix.
 
-### The tricks, named
+### Key techniques
 
 - **Mount event capture.** Express's public API fires `"mount"` on a sub-app as part of `app.use(subApp)`. Any object with `handle`, `set`, and `emit` methods is accepted as a sub-app. The hook returns exactly that shape and receives the parent `app` reference for free.
 - **`app.listen` monkey-patching.** The hook replaces `app.listen` with a wrapper that calls the original, captures the returned server, and fires a callback. Necessary because no event for "server is about to listen" reaches a sub-app.

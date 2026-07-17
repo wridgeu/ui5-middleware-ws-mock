@@ -1,0 +1,7 @@
+{
+	"name": "v5-validation-app",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Throwaway UI5 application fixture. The e2e runner copies it to a temp directory, installs @ui5/cli and the packed middleware into the copy, and boots `ui5 serve` against it. Not published, not part of the unit suite.",
+	"type": "module"
+}

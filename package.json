@@ -50,6 +50,7 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",
+		"validate:v5": "node test/e2e/run-v5-validation.mjs",
 		"pack:check": "npm pack --dry-run",
 		"commitlint": "commitlint --last",
 		"prepare": "husky",
@@ -75,6 +76,6 @@
 		"vitest": "^4.1.8"
 	},
 	"engines": {
-		"node": ">=22.18"
+		"node": "^22.20.0 || >=24.0.0"
 	}
 }
