@@ -439,9 +439,8 @@ function attachConnection(
 	const paramsSuffix = Object.keys(params).length > 0 ? ` params=${JSON.stringify(params)}` : "";
 	ctx.log.info(`connect (mode=${mode}) path=${pathname}${paramsSuffix}`);
 
-	// `onMessage` / `onClose` / socket-error `onError` wait for `onConnect` to settle so state it writes to
-	// `ctx.data` (the documented contract) is there even when the peer sends
-	// immediately or an async `onConnect` is still running.
+	// `onMessage` / `onClose` / socket-error `onError` wait for `onConnect` to settle, so
+	// state it writes to `ctx.data` is there even if the peer sends immediately.
 	if (onConnect) connected = invoke("onConnect", ctx, onError, () => onConnect(ctx));
 
 	ws.on("message", (payload: WebSocket.RawData) => {
