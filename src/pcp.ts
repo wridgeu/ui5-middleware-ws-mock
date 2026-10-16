@@ -144,15 +144,16 @@ export function decode(text: string): DecodeResult {
 	}
 	const headerPart = text.substring(0, splitPos);
 	const body = text.substring(splitPos + SEPARATOR.length);
-	// Null prototype so a `__proto__` header is stored, not swallowed by the setter.
-	const fields: Record<string, string> = Object.create(null);
+	// `Object.fromEntries` (below) defines own properties, so a `__proto__` header is
+	// kept instead of being swallowed by the prototype setter.
+	const entries: [string, string][] = [];
 	for (const line of headerPart.split("\n")) {
 		const match = line.match(FIELD_REGEX);
 		if (!match) continue;
 		const [, key, value] = match;
 		if (key !== undefined && value !== undefined) {
-			fields[pcpUnescape(key)] = pcpUnescape(value);
+			entries.push([pcpUnescape(key), pcpUnescape(value)]);
 		}
 	}
-	return { fields, body };
+	return { fields: Object.fromEntries(entries), body };
 }

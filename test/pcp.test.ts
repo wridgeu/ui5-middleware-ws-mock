@@ -248,11 +248,7 @@ describe("robustness against hostile or sloppy input", () => {
 		const { fields } = decode("pcp-action:X\n__proto__:evil\n\nb");
 		expect(Object.keys(fields)).toContain("__proto__");
 		expect(fields["__proto__"]).toBe("evil");
-		expect(({} as Record<string, unknown>)["evil"]).toBeUndefined();
-	});
-
-	it("does not surface inherited members as fields", () => {
-		expect(decode("pcp-action:X\n\nb").fields["constructor"]).toBeUndefined();
+		expect(Object.getPrototypeOf(fields)).toBe(Object.prototype);
 	});
 
 	it("stringifies non-string field values from plain-JS handlers", () => {

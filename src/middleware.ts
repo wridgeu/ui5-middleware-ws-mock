@@ -670,6 +670,7 @@ export default async function wsMock({
 			// instead of hanging; with other listeners (livereload, ...) stay silent.
 			const reject = (): void => {
 				if (server.listenerCount("upgrade") === 1) {
+					socket.once("finish", () => socket.destroy());
 					socket.end(
 						"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
 					);
