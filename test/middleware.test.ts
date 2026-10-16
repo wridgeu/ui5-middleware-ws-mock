@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { connect as netConnect } from "node:net";
+import type { Duplex } from "node:stream";
 import { resolve as resolvePath } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -1812,7 +1813,7 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
 		// A coexisting listener (e.g. livereload) that declines this path.
-		const seen: import("node:stream").Duplex[] = [];
+		const seen: Duplex[] = [];
 		serverHandle.server.on("upgrade", (_req, socket) => seen.push(socket));
 		fireHook(serverHandle.server);
 
