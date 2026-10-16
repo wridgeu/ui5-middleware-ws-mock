@@ -9,7 +9,7 @@
 // to a real @ui5/cli, boots the server, and exercises the WebSocket wire.
 //
 // It is deliberately CLI-version agnostic: point UI5_CLI_VERSION at any release or
-// dist-tag. The middleware declares no @ui5/* dependency (the host provides the
+// dist-tag (`latest` and `next` cover 4.x and the 5.x pre-release). The middleware declares no @ui5/* dependency (the host provides the
 // runtime), so the version under test lives here, not in package.json.
 //
 // Usage: node test/e2e/run-cli-validation.mjs
@@ -128,7 +128,7 @@ async function attempt(name, fn) {
 	}
 }
 
-async function assertPlainEcho(wsBase) {
+async function assertPlainEcho(wsBase, name = "plain /ws/echo") {
 	const ws = new WebSocket(`${wsBase}/ws/echo`);
 	// Arm the first-message waiter before "open": the handler greets from onConnect and
 	// the frame can arrive in the same read as the handshake response.
@@ -138,11 +138,7 @@ async function assertPlainEcho(wsBase) {
 	ws.send("ping");
 	const echo = String(await nextEvent(ws, "message"));
 	ws.close();
-	return check(
-		"plain /ws/echo",
-		hello === "HELLO" && echo === "echo:ping",
-		`hello=${hello} echo=${echo}`,
-	);
+	return check(name, hello === "HELLO" && echo === "echo:ping", `hello=${hello} echo=${echo}`);
 }
 
 async function assertParams(wsBase) {
@@ -214,6 +210,19 @@ async function main() {
 		const wsBase = url.replace(/^http/, "ws").replace(/\/$/, "");
 		console.log(`[cli-validation] server ready at ${url}`);
 		try {
+			// Tooling 4 reports the server at listen time, so a socket works even before
+			// any HTTP request. (Tooling 5 only learns the server from the first request.)
+			if (Number(installed.split(".")[0]) < 5) {
+				await attempt("ws before first HTTP request", () =>
+					assertPlainEcho(wsBase, "ws before first HTTP request"),
+				);
+			}
+			// A real app loads its page before opening a socket. Under @ui5/cli 5 that first
+			// HTTP request is how the middleware learns the server (see src/middleware.ts).
+			await attempt("http GET /index.html", async () => {
+				const res = await fetch(new URL("index.html", url));
+				check("http GET /index.html", res.ok, `status=${res.status}`);
+			});
 			await attempt("plain /ws/echo", () => assertPlainEcho(wsBase));
 			await attempt("params /ws/notify/:userId", () => assertParams(wsBase));
 			await attempt("pcp negotiation", () => assertPcp(wsBase));
