@@ -1837,6 +1837,28 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		for (const socket of seen) socket.destroy();
 	});
 
+	it("answers 404 to an upgrade whose request target cannot be parsed", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const chunks: Buffer[] = [];
+		const sock = netConnect(serverHandle.port, "127.0.0.1");
+		sock.on("data", (d) => chunks.push(d));
+		const closed = new Promise<void>((r) => sock.once("close", () => r()));
+		// Absolute-form target with an invalid authority: `new URL` throws on it.
+		sock.write(
+			"GET http://[bad HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+				"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+		);
+		await closed;
+		expect(Buffer.concat(chunks).toString()).toMatch(/^HTTP\/1\.1 404/);
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "verbose" && String(e.args[0]).includes("unparseable url"),
+		);
+	});
+
 	it("does not let a leading // turn the first segment into a hostname", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/echo");
 		await wsMock(args);
