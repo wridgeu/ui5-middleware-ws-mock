@@ -2095,6 +2095,41 @@ describe("ws-mock middleware: attaching through the request path (UI5 Tooling 5)
 		}
 	});
 
+	it("still shuts down every entry after one of them was re-created", async () => {
+		const own = await startServer();
+		const entry = async (name: string, path: string) => {
+			const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", path);
+			pass(
+				(await wsMock({
+					...args,
+					options: { ...args.options, middlewareName: name },
+				})) as Middleware,
+				own.server,
+			);
+		};
+		const connect = async (path: string) => {
+			const ws = new WebSocket(`ws://127.0.0.1:${own.port}${path}`);
+			await waitForOpen(ws);
+			return ws;
+		};
+		await entry("ws-a", "/ws/a");
+		await entry("ws-b", "/ws/b");
+		const oldA = await connect("/ws/a");
+		const oldAClosed = new Promise<void>((r) => oldA.once("close", () => r()));
+		await entry("ws-a", "/ws/a"); // re-initialization: same name replaces the old instance
+		await oldAClosed;
+		const newA = await connect("/ws/a");
+		const b = await connect("/ws/b");
+		const closed = [newA, b].map((ws) => new Promise<void>((r) => ws.once("close", () => r())));
+
+		const outcome = await Promise.race([
+			own.close().then(() => "closed"),
+			new Promise((r) => setTimeout(() => r("hung"), 2000)),
+		]);
+		expect(outcome).toBe("closed");
+		await Promise.all(closed);
+	});
+
 	it("does not remove a close wrapper another plugin installed", async () => {
 		const own = await startServer();
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
