@@ -1,7 +1,7 @@
 name: CLI Validation
 
-# Boots a real `ui5 serve` with the packed middleware under the stable
-# (`latest`) @ui5/cli release and asserts the WebSocket wire end-to-end. The unit suite mocks
+# Boots a real `ui5 serve` with the packed middleware under the stable (`latest`)
+# @ui5/cli release and asserts the WebSocket wire end-to-end. The unit suite mocks
 # the tooling harness; this job proves the runtime contract against the actual CLI.
 #
 # Add a leg to the matrix to cover another CLI line. A failure only blocks a PR if

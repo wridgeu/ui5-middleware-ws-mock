@@ -30,6 +30,7 @@ Environment knobs:
 
 The middleware declares no `@ui5/*` dependency (the host `ui5 serve` process
 provides the runtime), so the CLI version under test lives in this harness, not
-in `package.json`. CI runs the harness for `latest` on every PR (and on demand via workflow_dispatch). Run it locally against
-another release with `UI5_CLI_VERSION=<version|dist-tag> npm run validate:cli`
-(PowerShell: set `$env:UI5_CLI_VERSION` first).
+in `package.json`. CI runs the harness for `latest` on every PR (and on demand
+via `workflow_dispatch`). Run it locally against another release with
+`UI5_CLI_VERSION=<version|dist-tag> npm run validate:cli` (PowerShell: set
+`$env:UI5_CLI_VERSION` first).

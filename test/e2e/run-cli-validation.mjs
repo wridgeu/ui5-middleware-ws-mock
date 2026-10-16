@@ -1,4 +1,4 @@
-// End-to-end validation that the middleware works under a given @ui5/cli major.
+// End-to-end validation that the middleware works under a given @ui5/cli version.
 //
 // Why this exists: the unit suite (test/middleware.test.ts) drives the factory
 // with a structural stand-in for the UI5 tooling harness. It proves the
@@ -8,10 +8,9 @@
 // server). This harness closes that gap: it installs the packed middleware next
 // to a real @ui5/cli, boots the server, and exercises the WebSocket wire.
 //
-// It is deliberately CLI-version agnostic. Point UI5_CLI_VERSION at any
-// supported release or dist-tag. The
-// middleware declares no @ui5/* dependency (the host provides the runtime), so
-// the version under test lives here, not in package.json.
+// It is deliberately CLI-version agnostic: point UI5_CLI_VERSION at any release or
+// dist-tag. The middleware declares no @ui5/* dependency (the host provides the
+// runtime), so the version under test lives here, not in package.json.
 //
 // Usage: node test/e2e/run-cli-validation.mjs
 //   UI5_CLI_VERSION  npm version/dist-tag to install (default: latest)
@@ -79,7 +78,7 @@ function bootServer(cwd) {
 			const match = buffer.match(/URL:\s*(http:\/\/[^\s]+)/);
 			if (match && /Server started/.test(buffer)) {
 				clearTimeout(timer);
-				resolveReady({ child, url: match[1], log: () => buffer });
+				resolveReady({ child, url: match[1] });
 			}
 		};
 		child.stdout.on("data", onData);
