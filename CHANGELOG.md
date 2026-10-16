@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.5.0...v0.5.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* close hanging upgrades, order lifecycle callbacks and harden config and input handling ([167bc83](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/167bc83fb5a6d14ba217a100bebf9a9a343705cc))
+* gate socket-error onError on onConnect; scope PR to hardening ([fe0a7f1](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/fe0a7f1daf5cc31ec4274d452e1e35a1f8f1c285))
+* harden e2e harness and shutdown, tighten tests, refresh docs ([1ce3d0c](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/1ce3d0c19034d5f385622605d50e7e192964a15a))
+* harden upgrade handling, lifecycle ordering and config validation; add real-CLI e2e and real type tests ([fdd129b](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/fdd129bf959656a611ffe8ed7dc7e5b74b3b74f4))
+* keep PCP fields a normal object, destroy rejected upgrade sockets, document callback order ([12071f1](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/12071f1e1e9bd70b177d281cf403f568ff866790))
+
+
+### Code Refactoring
+
+* **test:** import Duplex type at the top of the file ([ae7e7fc](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/ae7e7fc1d7146307efd3d7e8e0cca5e7b01b8bff))
+* tidy e2e harness comments and drop an unused return field ([85395e4](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/85395e4ac5224013ce20643a74cf35ccf556efa6))
+* tighten the onConnect ordering comment ([c50062e](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/c50062e2b7d50f2d90bda0c9dd8094c49363e603))
+
 ## [0.5.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.4.1...v0.5.0) (2026-06-17)
 
 
