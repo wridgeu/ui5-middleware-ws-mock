@@ -4,6 +4,11 @@ export default defineConfig({
 	test: {
 		include: ["test/**/*.test.ts"],
 		pool: "forks",
+		typecheck: {
+			enabled: true,
+			include: ["test/**/*.test-d.ts"],
+			tsconfig: "./tsconfig.test.json",
+		},
 		coverage: {
 			provider: "v8",
 			include: ["src/**/*.ts"],

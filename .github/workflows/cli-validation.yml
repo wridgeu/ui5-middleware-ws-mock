@@ -1,0 +1,55 @@
+name: CLI Validation
+
+# Boots a real `ui5 serve` with the packed middleware under the stable (`latest`)
+# @ui5/cli release and asserts the WebSocket wire end-to-end. The unit suite mocks
+# the tooling harness; this job proves the runtime contract against the actual CLI.
+#
+# Add a leg to the matrix to cover another CLI line. A failure only blocks a PR if
+# this check is marked required in the branch protection rules.
+# Do not mark it required: the `paths` filter below skips docs-only PRs, and a skipped
+# required check stays pending forever.
+
+on:
+    pull_request:
+        branches: [main]
+        # Skip docs-only changes; this job installs a full CLI and is slow on Windows.
+        paths:
+            - "src/**"
+            - "test/e2e/**"
+            - "package.json"
+            - "package-lock.json"
+            - ".github/workflows/cli-validation.yml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: cli-validation-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    validate-cli:
+        name: validate-cli (@ui5/cli ${{ matrix.cli }}, ${{ matrix.os }}, node ${{ matrix.node }})
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest]
+                node: [24]
+                cli: [latest]
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 15
+        env:
+            UI5_CLI_VERSION: ${{ matrix.cli }}
+        steps:
+            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+              with:
+                  node-version: ${{ matrix.node }}
+                  cache: npm
+
+            - run: npm ci
+
+            - name: Validate against @ui5/cli ${{ matrix.cli }}
+              run: npm run validate:cli

@@ -114,7 +114,7 @@ export function encode(options: EncodeOptions = {}): string {
 			// would silently lose data on the wire. Fail loudly instead.
 			throw new Error("PCP field names must be non-empty");
 		}
-		header += `${pcpEscape(name)}:${pcpEscape(value)}\n`;
+		header += `${pcpEscape(name)}:${pcpEscape(String(value))}\n`;
 	}
 	return header + "\n" + body;
 }
@@ -144,14 +144,16 @@ export function decode(text: string): DecodeResult {
 	}
 	const headerPart = text.substring(0, splitPos);
 	const body = text.substring(splitPos + SEPARATOR.length);
-	const fields: Record<string, string> = {};
+	// `Object.fromEntries` (below) defines own properties, so a `__proto__` header is
+	// kept instead of being swallowed by the prototype setter.
+	const entries: [string, string][] = [];
 	for (const line of headerPart.split("\n")) {
 		const match = line.match(FIELD_REGEX);
 		if (!match) continue;
 		const [, key, value] = match;
 		if (key !== undefined && value !== undefined) {
-			fields[pcpUnescape(key)] = pcpUnescape(value);
+			entries.push([pcpUnescape(key), pcpUnescape(value)]);
 		}
 	}
-	return { fields, body };
+	return { fields: Object.fromEntries(entries), body };
 }

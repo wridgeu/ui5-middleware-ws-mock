@@ -74,6 +74,10 @@ describe("pcpUnescape", () => {
 });
 
 describe("pcpEscape / pcpUnescape round-trip", () => {
+	it("preserves carriage returns", () => {
+		expect(pcpUnescape(pcpEscape("a\rb"))).toBe("a\rb");
+	});
+
 	it("round-trips ascii", () => {
 		expect(pcpUnescape(pcpEscape("hello"))).toBe("hello");
 	});
@@ -236,5 +240,18 @@ describe("decode", () => {
 		expect(result.fields).toEqual({});
 		expect(result.body).toBe("body");
 		expect(elapsedMs).toBeLessThan(500);
+	});
+});
+
+describe("robustness against hostile or sloppy input", () => {
+	it("keeps a __proto__ header as a plain field without touching the prototype", () => {
+		const { fields } = decode("pcp-action:X\n__proto__:evil\n\nb");
+		expect(Object.keys(fields)).toContain("__proto__");
+		expect(fields["__proto__"]).toBe("evil");
+	});
+
+	it("stringifies non-string field values from plain-JS handlers", () => {
+		const wire = encode({ fields: { count: 3 as unknown as string } });
+		expect(decode(wire).fields["count"]).toBe("3");
 	});
 });

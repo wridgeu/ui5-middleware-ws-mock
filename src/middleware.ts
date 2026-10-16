@@ -12,8 +12,9 @@
  * and on a match hand the socket to `wss.handleUpgrade`, exposing any
  * extracted path parameters on `ctx.params`. A pathname that matches no route
  * (or whose percent-encoding cannot be decoded) is left unclaimed so other
- * middleware (fe-mockserver etc.) can handle it. Unparseable urls log at
- * verbose and bail too.
+ * middleware (fe-mockserver etc.) can handle it; if ours is the only upgrade
+ * listener it answers `404` so the client does not hang. Unparseable urls log at
+ * verbose and are treated the same way.
  *
  * PCP subprotocol negotiation is declared via `handleProtocols` at
  * WebSocketServer construction: if the client offered `v10.pcp.sap.com` we
@@ -351,15 +352,16 @@ function decodeMessage(raw: string, mode: WebSocketMode, log: WebSocketLog): Inb
 function settle(
 	fn: () => void | Promise<void>,
 	onFail: (err: unknown, kind: "threw" | "rejected") => void,
-): void {
+): Promise<void> {
 	try {
 		const result = fn();
 		if (result && typeof result.then === "function") {
-			result.catch((err: unknown) => onFail(err, "rejected"));
+			return result.then(undefined, (err: unknown) => onFail(err, "rejected"));
 		}
 	} catch (err) {
 		onFail(err, "threw");
 	}
+	return Promise.resolve();
 }
 
 /**
@@ -374,7 +376,7 @@ function notifyError(
 	err: unknown,
 ): void {
 	if (!onError) return;
-	settle(
+	void settle(
 		() => onError(ctx, err),
 		(hookErr, kind) => ctx.log.error(`onError ${kind}:`, hookErr),
 	);
@@ -382,15 +384,16 @@ function notifyError(
 
 /**
  * Awaits a possibly-async handler callback, logs the failure, and fans it out
- * to the handler's optional `onError` hook via `notifyError`.
+ * to the handler's optional `onError` hook via `notifyError`. The returned
+ * promise never rejects; it resolves once the callback has finished.
  */
 function invoke(
 	name: string,
 	ctx: WebSocketContext,
 	onError: WebSocketHandler["onError"],
 	fn: () => void | Promise<void>,
-): void {
-	settle(fn, (err, kind) => {
+): Promise<void> {
+	return settle(fn, (err, kind) => {
 		ctx.log.error(`${name} ${kind}:`, err);
 		notifyError(ctx, onError, err);
 	});
@@ -423,9 +426,12 @@ function attachConnection(
 	const mode: WebSocketMode = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
 	const ctx = createContext(ws, req, mode, params, prefix, baseLog);
 	const { onConnect, onMessage, onClose, onError } = loaded.handler;
+	// Assigned after `onConnect` is invoked; a socket error raised synchronously
+	// inside `onConnect` therefore sees the already-resolved placeholder.
+	let connected: Promise<void> = Promise.resolve();
 	ws.on("error", (err) => {
 		ctx.log.error("socket error:", err);
-		notifyError(ctx, onError, err);
+		void connected.then(() => notifyError(ctx, onError, err));
 	});
 
 	// Surface the concrete request pathname (and any extracted params) so a
@@ -433,15 +439,17 @@ function attachConnection(
 	const paramsSuffix = Object.keys(params).length > 0 ? ` params=${JSON.stringify(params)}` : "";
 	ctx.log.info(`connect (mode=${mode}) path=${pathname}${paramsSuffix}`);
 
-	if (onConnect) {
-		invoke("onConnect", ctx, onError, () => onConnect(ctx));
-	}
+	// `onMessage` / `onClose` / socket-error `onError` wait for `onConnect` to settle, so
+	// state it writes to `ctx.data` is there even if the peer sends immediately.
+	if (onConnect) connected = invoke("onConnect", ctx, onError, () => onConnect(ctx));
 
 	ws.on("message", (payload: WebSocket.RawData) => {
 		const raw = toUtf8(payload);
 		const message = decodeMessage(raw, mode, ctx.log);
 		if (onMessage) {
-			invoke("onMessage", ctx, onError, () => onMessage(ctx, message));
+			void connected.then(() =>
+				invoke("onMessage", ctx, onError, () => onMessage(ctx, message)),
+			);
 			return;
 		}
 		ctx.log.verbose("dropped frame (no onMessage)");
@@ -451,7 +459,9 @@ function attachConnection(
 		const reason = reasonBuf.toString("utf8");
 		ctx.log.info(`close ${code} ${reason}`);
 		if (onClose) {
-			invoke("onClose", ctx, onError, () => onClose(ctx, code, reason));
+			void connected.then(() =>
+				invoke("onClose", ctx, onError, () => onClose(ctx, code, reason)),
+			);
 		}
 	});
 }
@@ -584,7 +594,20 @@ export default async function wsMock({
 	options,
 	middlewareUtil,
 }: FactoryParameters): Promise<unknown> {
-	const routes = options.configuration?.routes ?? [];
+	const configured: unknown = options.configuration?.routes;
+	if (configured !== undefined && !Array.isArray(configured)) {
+		log.error("[ws-mock] `routes` must be a list; ignoring configuration");
+	}
+	// A hand-written ui5.yaml is a trust boundary: skip malformed entries with an
+	// error instead of letting a TypeError crash `ui5 serve` at startup.
+	const routes = (Array.isArray(configured) ? configured : []).filter(
+		(r: Partial<WebSocketRoute> | null): r is WebSocketRoute => {
+			const ok = typeof r?.mountPath === "string" && typeof r.handler === "string";
+			if (!ok)
+				log.error("[ws-mock] skipping route without string `mountPath` and `handler`:", r);
+			return ok;
+		},
+	);
 	if (routes.length === 0) {
 		log.warn("[ws-mock] no routes configured; middleware is a no-op");
 	}
@@ -643,19 +666,59 @@ export default async function wsMock({
 		});
 
 		server.on("upgrade", (req, socket, head) => {
+			// Once any `'upgrade'` listener exists Node no longer closes unclaimed
+			// upgrades itself. If ours is the only one, answer so the client fails fast
+			// instead of hanging; with other listeners (livereload, ...) stay silent.
+			const reject = (): void => {
+				if (server.listenerCount("upgrade") === 1) {
+					// Node leaves a handed-over socket without an 'error' listener; a client
+					// reset mid-write would otherwise be an uncaught exception.
+					socket.on("error", () => socket.destroy());
+					socket.once("finish", () => socket.destroy());
+					socket.end(
+						"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+					);
+				}
+			};
 			let pathname: string;
 			try {
-				pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+				// Prefix the base for origin-form targets: a leading `//` would
+				// otherwise be parsed as a hostname and swallow the first segment.
+				const target = req.url?.startsWith("/") ? `http://localhost${req.url}` : req.url;
+				pathname = new URL(target ?? "/", "http://localhost").pathname;
 			} catch (err) {
 				log.verbose(`[ws-mock] ignoring upgrade with unparseable url=${req.url}:`, err);
+				reject();
 				return;
 			}
 			const matched = matchRoute(loaded, pathname, log);
-			if (!matched) return;
-			wss.handleUpgrade(req, socket, head, (ws) =>
-				attachConnection(ws, req, matched, pathname, log),
-			);
+			if (!matched) {
+				reject();
+				return;
+			}
+			try {
+				wss.handleUpgrade(req, socket, head, (ws) =>
+					attachConnection(ws, req, matched, pathname, log),
+				);
+			} catch (err) {
+				// ws throws if another listener already upgraded this socket.
+				log.error(`[ws-mock] upgrade for ${pathname} failed:`, err);
+			}
 		});
+
+		// Upgraded sockets keep `server.close()` from ever finishing and Node has no
+		// pre-close event, so drop the mock clients just before the real close runs.
+		const closeServer = server.close.bind(server);
+		server.close = (callback) => {
+			for (const client of wss.clients) {
+				try {
+					client.terminate();
+				} catch (err) {
+					log.warn("[ws-mock] terminate on shutdown threw:", err);
+				}
+			}
+			return closeServer(callback);
+		};
 
 		// List only routes that can actually match; a route whose pattern failed
 		// to compile is disabled and never listens, so advertising it here misleads.
