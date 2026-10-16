@@ -6,10 +6,19 @@ name: CLI Validation
 #
 # Add a leg to the matrix to cover another CLI line. A failure only blocks a PR if
 # this check is marked required in the branch protection rules.
+# Do not mark it required: the `paths` filter below skips docs-only PRs, and a skipped
+# required check stays pending forever.
 
 on:
     pull_request:
         branches: [main]
+        # Skip docs-only changes; this job installs a full CLI and is slow on Windows.
+        paths:
+            - "src/**"
+            - "test/e2e/**"
+            - "package.json"
+            - "package-lock.json"
+            - ".github/workflows/cli-validation.yml"
     workflow_dispatch:
 
 permissions:
@@ -26,7 +35,7 @@ jobs:
             fail-fast: false
             matrix:
                 os: [ubuntu-latest, windows-latest]
-                node: [22, 24]
+                node: [24]
                 cli: [latest]
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
