@@ -80,11 +80,21 @@ get no upgrade, because nothing listens for `'upgrade'`.
   connects first is not upgraded: it hangs while another upgrade listener (the
   built-in live reload) is registered, and otherwise receives an ordinary non-101
   HTTP response (observed on Node 26; other versions not checked).
+- **Re-initialization has a stale window.** After a `ui5.yaml` / `package.json` change
+  the server re-creates the stack, but the new instance only attaches on the next HTTP
+  request. Until then the old routes keep working and new ones are not served; on
+  attach the old instance is disposed and its open mock clients are dropped with
+  `terminate()` (close code 1006), not a clean close. Edits under `webapp/` do not
+  re-initialize. Observed on alpha.13: the listener count stays at live reload + ours
+  after repeated re-initializations (no pile-up).
+- **No `Origin` check** (as before); v5's built-in live reload does require a token.
+  See the README limitation.
 - Two `customMiddleware` entries of this package coexist (they are keyed by the entry
   name UI5 assigns); only a re-created instance with the same name replaces the old one.
 - Relies on `req.socket.server`, a property of Node's `net.Socket` that the type
-  definitions do not declare. v5 has no HTTP/2 mode (`--https` replaced it), so
-  `--h2` does not apply.
+  definitions do not declare. v5 has no HTTP/2 mode (`--https` replaced it and
+  works). On v4 `--h2` exits on Node 24+; on older Node (spdy) the `app.listen` hook
+  does not fire either, so that mode already had the first-request limitation.
 - The v5 internals described above are alpha-stage and may change again; the CI
   `next` leg exists to catch that.
 
