@@ -9,7 +9,7 @@
 // to a real @ui5/cli, boots the server, and exercises the WebSocket wire.
 //
 // It is deliberately CLI-version agnostic. Point UI5_CLI_VERSION at any
-// supported major (the `latest` and `next` dist-tags cover v4 and the v5 pre-release). The
+// supported release or dist-tag. The
 // middleware declares no @ui5/* dependency (the host provides the runtime), so
 // the version under test lives here, not in package.json.
 //

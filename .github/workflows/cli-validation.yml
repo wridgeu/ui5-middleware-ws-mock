@@ -4,9 +4,7 @@ name: CLI Validation
 # @ui5/cli major and asserts the WebSocket wire end-to-end. The unit suite mocks
 # the tooling harness; this job proves the runtime contract against the actual CLI.
 #
-# - `latest` (@ui5/cli 4.x): the stable line; a failure here blocks the PR.
-# - `next` (@ui5/cli 5 pre-release): informational (continue-on-error) while v5 is a
-#   moving alpha. Drop `experimental` once v5 is stable and `latest` points at it.
+# A failure blocks the PR. The workflow tests the stable `latest` @ui5/cli line.
 
 on:
     pull_request:
@@ -24,19 +22,12 @@ concurrency:
 jobs:
     validate-cli:
         name: validate-cli (@ui5/cli ${{ matrix.cli }}, ${{ matrix.os }}, node ${{ matrix.node }})
-        continue-on-error: ${{ matrix.experimental }}
         strategy:
             fail-fast: false
             matrix:
                 os: [ubuntu-latest, windows-latest]
                 node: [22, 24]
                 cli: [latest]
-                experimental: [false]
-                include:
-                    - { os: ubuntu-latest, node: 22, cli: next, experimental: true }
-                    - { os: ubuntu-latest, node: 24, cli: next, experimental: true }
-                    - { os: windows-latest, node: 22, cli: next, experimental: true }
-                    - { os: windows-latest, node: 24, cli: next, experimental: true }
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         env:

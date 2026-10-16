@@ -425,9 +425,12 @@ function attachConnection(
 	const mode: WebSocketMode = ws.protocol === SUBPROTOCOL ? "pcp" : "plain";
 	const ctx = createContext(ws, req, mode, params, prefix, baseLog);
 	const { onConnect, onMessage, onClose, onError } = loaded.handler;
+	// Assigned after `onConnect` is invoked; a socket error raised synchronously
+	// inside `onConnect` therefore sees the already-resolved placeholder.
+	let connected: Promise<void> = Promise.resolve();
 	ws.on("error", (err) => {
 		ctx.log.error("socket error:", err);
-		notifyError(ctx, onError, err);
+		void connected.then(() => notifyError(ctx, onError, err));
 	});
 
 	// Surface the concrete request pathname (and any extracted params) so a
@@ -435,12 +438,10 @@ function attachConnection(
 	const paramsSuffix = Object.keys(params).length > 0 ? ` params=${JSON.stringify(params)}` : "";
 	ctx.log.info(`connect (mode=${mode}) path=${pathname}${paramsSuffix}`);
 
-	// `onMessage` / `onClose` wait for `onConnect` to settle so state it writes to
+	// `onMessage` / `onClose` / socket-error `onError` wait for `onConnect` to settle so state it writes to
 	// `ctx.data` (the documented contract) is there even when the peer sends
 	// immediately or an async `onConnect` is still running.
-	const connected = onConnect
-		? invoke("onConnect", ctx, onError, () => onConnect(ctx))
-		: Promise.resolve();
+	if (onConnect) connected = invoke("onConnect", ctx, onError, () => onConnect(ctx));
 
 	ws.on("message", (payload: WebSocket.RawData) => {
 		const raw = toUtf8(payload);

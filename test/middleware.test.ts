@@ -1872,6 +1872,25 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		).toBe(true);
 	});
 
+	it("runs onError for a socket error only after an async onConnect has settled", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/slow-connect.ts", "/ws/slow");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/slow`);
+		ws.on("error", () => {});
+		const upgraded = new Promise<NodeJS.WritableStream>((resolve) =>
+			ws.once("upgrade", (res) => resolve(res.socket)),
+		);
+		await waitForOpen(ws);
+		// A frame with a reserved opcode makes the server-side `ws` emit 'error'.
+		(await upgraded).write(Buffer.from([0x8f, 0x00]));
+		await waitForLog(args.entries, (e) => String(e.args.join(" ")).includes("onError ready="));
+		expect(
+			args.entries.some((e) => String(e.args.join(" ")).includes("onError ready=true")),
+		).toBe(true);
+	});
+
 	it("server.close() terminates open mock clients instead of waiting on them", async () => {
 		const own = await startServer();
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
