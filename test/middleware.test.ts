@@ -1791,3 +1791,144 @@ describe("ws-mock middleware: behaviour pinned by fault injection", () => {
 		).toBe(true);
 	});
 });
+
+describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary", () => {
+	const statusOf = (ws: WebSocket) =>
+		new Promise<number>((resolve) => {
+			ws.once("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+			ws.once("error", () => {});
+		});
+
+	it("answers an upgrade no route claims with 404 instead of hanging", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/ecoh`);
+		expect(await statusOf(ws)).toBe(404);
+	});
+
+	it("stays silent on an unclaimed upgrade when another upgrade listener exists", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		// A coexisting listener (e.g. livereload) that declines this path.
+		const seen: import("node:stream").Duplex[] = [];
+		serverHandle.server.on("upgrade", (_req, socket) => seen.push(socket));
+		fireHook(serverHandle.server);
+
+		const bytes: Buffer[] = [];
+		const sock = netConnect(serverHandle.port, "127.0.0.1");
+		sock.on("data", (d) => bytes.push(d));
+		sock.write(
+			"GET /nobody HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+				"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+		);
+		await new Promise((r) => setTimeout(r, 150));
+		expect(Buffer.concat(bytes).toString()).toBe("");
+		sock.destroy();
+		for (const socket of seen) socket.destroy();
+	});
+
+	it("does not let a leading // turn the first segment into a hostname", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}//ws/echo`);
+		expect(await statusOf(ws)).toBe(404);
+	});
+
+	it("runs onMessage and onClose only after an async onConnect has settled", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/slow-connect.ts", "/ws/slow");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/slow`);
+		await waitForOpen(ws);
+		const reply = waitForMessages(ws, 1);
+		ws.send("immediately");
+		expect(await reply).toEqual(["ready=true"]);
+		ws.close();
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "info" && String(e.args.join(" ")).includes("closed ready=true"),
+		);
+	});
+
+	it("server.close() terminates open mock clients instead of waiting on them", async () => {
+		const own = await startServer();
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(own.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${own.port}/ws/echo`);
+		await waitForOpen(ws);
+		const clientClosed = new Promise<void>((r) => ws.once("close", () => r()));
+		const outcome = await Promise.race([
+			own.close().then(() => "closed"),
+			new Promise((r) => setTimeout(() => r("hung"), 2000)),
+		]);
+		expect(outcome).toBe("closed");
+		await clientClosed;
+	});
+
+	it("logs instead of crashing when another listener already upgraded the socket", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		// Registered before ws-mock's listener, so it upgrades the socket first.
+		const other = expectFallThrough(serverHandle.server, "/ws/echo");
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		ws.on("error", () => {});
+		await waitForOpen(ws);
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "error" && String(e.args[0]).includes("upgrade for /ws/echo failed"),
+		);
+		ws.close();
+		other.close();
+	});
+
+	it("skips a route without a handler and still serves the others", async () => {
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{ mountPath: "/ws/broken" } as never,
+						{ mountPath: "/ws/echo", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+		fireHook(serverHandle.server);
+
+		expect(
+			entries.some(
+				(e) => e.level === "error" && String(e.args[0]).includes("skipping route"),
+			),
+		).toBe(true);
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		expect(await ready).toEqual(["READY"]);
+		ws.close();
+	});
+
+	it("treats routes written as a map instead of a list as no routes", async () => {
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: { configuration: { routes: { mountPath: "/ws/echo" } as never } },
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+		expect(
+			entries.some(
+				(e) => e.level === "error" && String(e.args[0]).includes("must be a list"),
+			),
+		).toBe(true);
+	});
+});

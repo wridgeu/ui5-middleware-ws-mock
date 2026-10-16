@@ -242,3 +242,21 @@ describe("decode", () => {
 		expect(elapsedMs).toBeLessThan(500);
 	});
 });
+
+describe("robustness against hostile or sloppy input", () => {
+	it("keeps a __proto__ header as a plain field without touching the prototype", () => {
+		const { fields } = decode("pcp-action:X\n__proto__:evil\n\nb");
+		expect(Object.keys(fields)).toContain("__proto__");
+		expect(fields["__proto__"]).toBe("evil");
+		expect(({} as Record<string, unknown>)["evil"]).toBeUndefined();
+	});
+
+	it("does not surface inherited members as fields", () => {
+		expect(decode("pcp-action:X\n\nb").fields["constructor"]).toBeUndefined();
+	});
+
+	it("stringifies non-string field values from plain-JS handlers", () => {
+		const wire = encode({ fields: { count: 3 as unknown as string } });
+		expect(decode(wire).fields["count"]).toBe("3");
+	});
+});
