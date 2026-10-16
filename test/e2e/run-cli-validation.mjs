@@ -69,6 +69,7 @@ function bootServer(cwd) {
 	let buffer = "";
 	return new Promise((resolveReady, rejectReady) => {
 		const timer = setTimeout(() => {
+			stopServer(child);
 			rejectReady(
 				new Error(`server did not become ready within ${READY_TIMEOUT_MS}ms\n${buffer}`),
 			);
@@ -130,8 +131,11 @@ async function attempt(name, fn) {
 
 async function assertPlainEcho(wsBase) {
 	const ws = new WebSocket(`${wsBase}/ws/echo`);
+	// Arm the first-message waiter before "open": the handler greets from onConnect and
+	// the frame can arrive in the same read as the handshake response.
+	const greeting = nextEvent(ws, "message");
 	await nextEvent(ws, "open");
-	const hello = String(await nextEvent(ws, "message"));
+	const hello = String(await greeting);
 	ws.send("ping");
 	const echo = String(await nextEvent(ws, "message"));
 	ws.close();
@@ -144,17 +148,19 @@ async function assertPlainEcho(wsBase) {
 
 async function assertParams(wsBase) {
 	const ws = new WebSocket(`${wsBase}/ws/notify/42`);
+	const first = nextEvent(ws, "message");
 	await nextEvent(ws, "open");
-	const msg = String(await nextEvent(ws, "message"));
+	const msg = String(await first);
 	ws.close();
 	return check("params /ws/notify/:userId", msg === "subscribed:42", `msg=${msg}`);
 }
 
 async function assertPcp(wsBase) {
 	const ws = new WebSocket(`${wsBase}/ws/echo`, ["v10.pcp.sap.com"]);
+	const greeting = nextEvent(ws, "message");
 	await nextEvent(ws, "open");
 	const negotiated = ws.protocol;
-	const frame = String(await nextEvent(ws, "message"));
+	const frame = String(await greeting);
 	ws.close();
 	const ok =
 		negotiated === "v10.pcp.sap.com" && frame.includes("pcp-action") && frame.includes("HELLO");
@@ -175,7 +181,7 @@ async function main() {
 	// Build the current source so the pack ships fresh dist output.
 	run(NPM, ["run", "build"], { cwd: REPO_ROOT });
 
-	const tmp = mkdtempSync(join(tmpdir(), "wsmock-v5-"));
+	const tmp = mkdtempSync(join(tmpdir(), "wsmock-cli-"));
 	const app = join(tmp, "app");
 	try {
 		cpSync(FIXTURE, app, { recursive: true });
@@ -219,7 +225,8 @@ async function main() {
 		if (KEEP_TMP) {
 			console.log(`[cli-validation] KEEP_TMP set; left temp app at ${app}`);
 		} else {
-			rmSync(tmp, { recursive: true, force: true });
+			// Retries cover Windows holding the directory briefly after the server exits.
+			rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 		}
 	}
 

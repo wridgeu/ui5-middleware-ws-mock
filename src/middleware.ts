@@ -12,8 +12,9 @@
  * and on a match hand the socket to `wss.handleUpgrade`, exposing any
  * extracted path parameters on `ctx.params`. A pathname that matches no route
  * (or whose percent-encoding cannot be decoded) is left unclaimed so other
- * middleware (fe-mockserver etc.) can handle it. Unparseable urls log at
- * verbose and bail too.
+ * middleware (fe-mockserver etc.) can handle it; if ours is the only upgrade
+ * listener it answers `404` so the client does not hang. Unparseable urls log at
+ * verbose and are treated the same way.
  *
  * PCP subprotocol negotiation is declared via `handleProtocols` at
  * WebSocketServer construction: if the client offered `v10.pcp.sap.com` we
@@ -710,7 +711,13 @@ export default async function wsMock({
 		// pre-close event, so drop the mock clients just before the real close runs.
 		const closeServer = server.close.bind(server);
 		server.close = (callback) => {
-			for (const client of wss.clients) client.terminate();
+			for (const client of wss.clients) {
+				try {
+					client.terminate();
+				} catch (err) {
+					log.warn("[ws-mock] terminate on shutdown threw:", err);
+				}
+			}
 			return closeServer(callback);
 		};
 

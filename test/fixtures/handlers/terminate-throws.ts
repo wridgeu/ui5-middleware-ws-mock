@@ -8,9 +8,7 @@ import type { WebSocketHandler } from "../../../src/types.js";
 const handler: WebSocketHandler = {
 	onConnect: (ctx) => {
 		const ws = ctx.ws as unknown as { terminate: () => void };
-		const original = ws.terminate;
 		ws.terminate = () => {
-			ws.terminate = original; // one-shot, so server shutdown can still terminate
 			throw new Error("synthetic ws.terminate failure");
 		};
 		ctx.terminate();

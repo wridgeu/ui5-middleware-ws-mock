@@ -1770,7 +1770,13 @@ describe("ws-mock middleware: behaviour pinned by fault injection", () => {
 		const ready = waitForMessages(ws, 1);
 		await waitForOpen(ws);
 		expect(await ready).toEqual(["READY"]);
-		expect(entries.some((e) => e.level === "error" || e.level === "warn")).toBe(true);
+		expect(
+			entries.some(
+				(e) =>
+					e.level === "error" &&
+					String(e.args.join(" ")).includes("invalid mountPath pattern"),
+			),
+		).toBe(true);
 		ws.close();
 	});
 
