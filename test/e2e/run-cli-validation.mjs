@@ -128,7 +128,7 @@ async function attempt(name, fn) {
 	}
 }
 
-async function assertPlainEcho(wsBase) {
+async function assertPlainEcho(wsBase, name = "plain /ws/echo") {
 	const ws = new WebSocket(`${wsBase}/ws/echo`);
 	// Arm the first-message waiter before "open": the handler greets from onConnect and
 	// the frame can arrive in the same read as the handshake response.
@@ -138,11 +138,7 @@ async function assertPlainEcho(wsBase) {
 	ws.send("ping");
 	const echo = String(await nextEvent(ws, "message"));
 	ws.close();
-	return check(
-		"plain /ws/echo",
-		hello === "HELLO" && echo === "echo:ping",
-		`hello=${hello} echo=${echo}`,
-	);
+	return check(name, hello === "HELLO" && echo === "echo:ping", `hello=${hello} echo=${echo}`);
 }
 
 async function assertParams(wsBase) {
@@ -214,6 +210,13 @@ async function main() {
 		const wsBase = url.replace(/^http/, "ws").replace(/\/$/, "");
 		console.log(`[cli-validation] server ready at ${url}`);
 		try {
+			// Tooling 4 reports the server at listen time, so a socket works even before
+			// any HTTP request. (Tooling 5 only learns the server from the first request.)
+			if (Number(installed.split(".")[0]) < 5) {
+				await attempt("ws before first HTTP request", () =>
+					assertPlainEcho(wsBase, "ws before first HTTP request"),
+				);
+			}
 			// A real app loads its page before opening a socket. Under @ui5/cli 5 that first
 			// HTTP request is how the middleware learns the server (see src/middleware.ts).
 			await attempt("http GET /index.html", async () => {

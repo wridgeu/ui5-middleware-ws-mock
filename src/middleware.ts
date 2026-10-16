@@ -93,7 +93,7 @@ interface FactoryParameters {
 	options: {
 		/** Value of `customMiddleware[].configuration` as declared in `ui5.yaml`. */
 		configuration?: Partial<WebSocketMiddlewareConfiguration>;
-		/** Middleware name from `ui5.yaml` (unused here; UI5 tooling always provides it). */
+		/** Unique name of this `customMiddleware` entry; identifies it across re-initializations. */
 		middlewareName?: string;
 	};
 	/**
@@ -115,12 +115,13 @@ interface HookCallbackArgs {
 }
 
 /**
- * Per HTTP server, the teardown of the middleware instance currently attached to
- * it. UI5 Tooling 5 re-creates the middleware against the same server on every
- * re-initialization, so a new instance first disposes the previous one instead of
- * stacking a second `'upgrade'` listener.
+ * Per HTTP server and `customMiddleware` entry name, the teardown of the instance
+ * currently attached. UI5 Tooling 5 re-creates every middleware against the same
+ * server on each re-initialization, so a new instance first disposes the previous
+ * one with the same name instead of stacking a second `'upgrade'` listener. Entries
+ * with different names (UI5 suffixes duplicates) coexist.
  */
-const attachedInstances = new WeakMap<Server, () => void>();
+const attachedInstances = new WeakMap<Server, Map<string, () => void>>();
 
 /** Route-scoped log prefix, e.g. `[ws-mock:/ws/foo]`. */
 function routeTag(mountPath: string): string {
@@ -640,10 +641,14 @@ export default async function wsMock({
 	// is declaration-order, first-match-wins.
 	reportRouteDiagnostics(loaded, log);
 
-	let attachedTo: Server | undefined;
+	const entryName = options.middlewareName ?? "ui5-middleware-ws-mock";
+	const attachedServers = new WeakSet<Server>();
 	const attach = (server: Server): void => {
-		attachedTo = server;
-		attachedInstances.get(server)?.();
+		if (attachedServers.has(server)) return;
+		attachedServers.add(server);
+		const instances = attachedInstances.get(server) ?? new Map<string, () => void>();
+		attachedInstances.set(server, instances);
+		instances.get(entryName)?.();
 		const wss = new WebSocketServer({
 			noServer: true,
 			handleProtocols: (protocols: Set<string>): string | false =>
@@ -731,13 +736,15 @@ export default async function wsMock({
 				}
 			}
 		};
-		server.close = function (this: Server, callback) {
+		const closeWithCleanup = function (this: Server, callback?: (err?: Error) => void): Server {
 			terminateClients();
 			return originalClose.call(this, callback);
 		};
-		attachedInstances.set(server, () => {
+		server.close = closeWithCleanup;
+		instances.set(entryName, () => {
 			server.off("upgrade", onUpgrade);
-			server.close = originalClose;
+			// Another plugin may have wrapped `close` since; leave its wrapper in place.
+			if (server.close === closeWithCleanup) server.close = originalClose;
 			terminateClients();
 			wss.close();
 		});
@@ -759,8 +766,8 @@ export default async function wsMock({
 	// opened before any HTTP request reaches the middleware is therefore not served
 	// under Tooling 5.
 	const attachFromRequest = (req: IncomingMessage, _res: unknown, next: () => void): void => {
-		const server = (req.socket as { server?: Server }).server;
-		if (server && server !== attachedTo) attach(server);
+		const server = (req.socket as { server?: Server } | undefined)?.server;
+		if (server) attach(server);
 		next();
 	};
 	const hooked = hook(

@@ -39,9 +39,10 @@ supported range is documented and enforced by the CI matrix instead.
 
 An earlier version of this document concluded "the contract is stable across the two
 majors". That was verified against `5.0.0-alpha.6`, which still used `app.listen`.
-By `alpha.13` the server layer had been rewritten. The symptom is that handlers load
-(the startup log looks healthy) but every WebSocket connect hangs, because nothing
-listens for `'upgrade'`.
+The server layer was rewritten in `5.0.0-alpha.7` (UI5/cli PR 1478, 2026-08-05: a
+`Supervisor` that re-creates the serving stack behind one stable `http.Server`). The
+symptom is that handlers load (the startup log looks healthy) but WebSocket connects
+get no upgrade, because nothing listens for `'upgrade'`.
 
 ## What was tried
 
@@ -75,10 +76,15 @@ listens for `'upgrade'`.
 
 - **A WebSocket opened before any HTTP request reaches the middleware is not served
   under v5.** The server is only discovered from the first request's socket. A UI5
-  page loads over HTTP first, so this is normally invisible, but a bare client
-  hitting a freshly started server will hang until the first page load.
+  page loads over HTTP first, so this is normally invisible. A bare client that
+  connects first is not upgraded: it hangs while another upgrade listener (the
+  built-in live reload) is registered, and otherwise receives an ordinary non-101
+  HTTP response (observed on Node 26; other versions not checked).
+- Two `customMiddleware` entries of this package coexist (they are keyed by the entry
+  name UI5 assigns); only a re-created instance with the same name replaces the old one.
 - Relies on `req.socket.server`, a property of Node's `net.Socket` that the type
-  definitions do not declare. `http2` (`ui5 serve --h2`) was not checked.
+  definitions do not declare. v5 has no HTTP/2 mode (`--https` replaced it), so
+  `--h2` does not apply.
 - The v5 internals described above are alpha-stage and may change again; the CI
   `next` leg exists to catch that.
 
@@ -106,7 +112,7 @@ not disturb open mock connections.
    is the one breaking change. Consumers on Node 22.18/22.19 stay on the previous
    release line.
 
-## Checklist before merging (once `@ui5/cli` 5 is released)
+## Checklist before this leaves draft (once `@ui5/cli` 5 is released)
 
 - [ ] Re-run `npm run validate:cli` with `UI5_CLI_VERSION` set to the released 5.x
       and to the last 4.x; all checks green on both.

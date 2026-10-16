@@ -23,7 +23,13 @@ vi.mock("ui5-utils-express/lib/hook.js", () => ({
 		// Forward to the helper-side capture. Cast through unknown because the
 		// helper types `server` as http.Server; the runtime payload matches.
 		setHookCapture(callback as Parameters<typeof setHookCapture>[0]);
-		return (_req: unknown, _res: unknown, next: () => void) => next();
+		// Like the real hook, the result is a function that also carries the sub-app
+		// mount protocol (`handle`/`set`/`emit`) Express 4 looks for.
+		return Object.assign((_req: unknown, _res: unknown, next: () => void) => next(), {
+			handle: () => {},
+			set: () => {},
+			emit: () => {},
+		});
 	},
 }));
 
@@ -2044,9 +2050,66 @@ describe("ws-mock middleware: attaching through the request path (UI5 Tooling 5)
 		const mw = (await wsMock(args)) as Middleware;
 		pass(mw, serverHandle.server);
 		pass(mw, serverHandle.server);
-		fireHook(serverHandle.server);
-
 		expect(serverHandle.server.listenerCount("upgrade")).toBe(1);
+
+		// Tooling 4 also reports the same server through the hook; that must not
+		// re-attach and tear down connections made in the meantime.
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		await ready;
+		fireHook(serverHandle.server);
+		const echo = waitForMessages(ws, 1);
+		ws.send("still here");
+		expect(await echo).toEqual(["ECHO:still here"]);
+		expect(serverHandle.server.listenerCount("upgrade")).toBe(1);
+		ws.close();
+	});
+
+	it("keeps the hook's mount protocol on the returned middleware", async () => {
+		const mw = (await wsMock(
+			buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo"),
+		)) as Middleware & { handle?: unknown; set?: unknown; emit?: unknown };
+		// Express 4 mounts an object with handle+set as a sub-app and emits `mount`
+		// on it, which is how the hook sees `app.listen` under Tooling 4.
+		expect(typeof mw.handle).toBe("function");
+		expect(typeof mw.set).toBe("function");
+		expect(typeof mw.emit).toBe("function");
+	});
+
+	it("serves two differently named entries side by side on one server", async () => {
+		const named = (name: string, mountPath: string) => {
+			const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", mountPath);
+			return { ...args, options: { ...args.options, middlewareName: name } };
+		};
+		pass((await wsMock(named("ws-a", "/ws/a"))) as Middleware, serverHandle.server);
+		pass((await wsMock(named("ws-b", "/ws/b"))) as Middleware, serverHandle.server);
+
+		expect(serverHandle.server.listenerCount("upgrade")).toBe(2);
+		for (const path of ["/ws/a", "/ws/b"]) {
+			const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}${path}`);
+			const ready = waitForMessages(ws, 1);
+			await waitForOpen(ws);
+			expect(await ready).toEqual(["READY"]);
+			ws.close();
+		}
+	});
+
+	it("does not remove a close wrapper another plugin installed", async () => {
+		const own = await startServer();
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		pass((await wsMock(args)) as Middleware, own.server);
+		const foreign = vi.fn();
+		const before = own.server.close;
+		own.server.close = function (this: typeof own.server, cb) {
+			foreign();
+			return before.call(this, cb);
+		};
+		// Same entry name: the new instance disposes the old one, which must not
+		// clobber the wrapper installed after it.
+		pass((await wsMock(args)) as Middleware, own.server);
+		await own.close();
+		expect(foreign).toHaveBeenCalledOnce();
 	});
 
 	it("a re-created instance replaces the previous one on the same server", async () => {
@@ -2091,7 +2154,8 @@ describe("ws-mock middleware: attaching through the request path (UI5 Tooling 5)
 		)) as Middleware;
 		const next = vi.fn();
 		mw({ socket: {} }, {}, next);
-		expect(next).toHaveBeenCalledOnce();
+		mw({}, {}, next);
+		expect(next).toHaveBeenCalledTimes(2);
 		expect(serverHandle.server.listenerCount("upgrade")).toBe(0);
 	});
 });

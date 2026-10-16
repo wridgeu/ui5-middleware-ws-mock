@@ -692,6 +692,8 @@ UI5 tooling's custom-middleware API does not expose the underlying HTTP server, 
 8. The patched `listen` runs the original (which creates and starts the HTTP server), captures the returned `server`, then invokes the registered callback with `{ app, server, on, use, options }`.
 9. Inside the callback the middleware constructs its `WebSocketServer` with `{ noServer: true, handleProtocols: ... }` and registers `server.on("upgrade", ...)`.
 
+On `@ui5/cli` 5 steps 6 to 8 do not happen (the server is created without `app.listen`), so the same attach logic runs from the first HTTP request instead: the returned middleware reads `req.socket.server` and attaches once per server, replacing any earlier instance of the same `customMiddleware` entry that a server re-initialization left behind.
+
 From that point on, every incoming upgrade request flows through the middleware's listener; matching pathnames are dispatched via `wss.handleUpgrade(req, socket, head, cb)`, and non-matching requests return silently so other upgrade listeners (for example `ui5-middleware-livereload`'s WS channel) see the event next. If no other listener is registered, the request is answered with `404` rather than left open.
 
 ### Why the workaround is necessary
