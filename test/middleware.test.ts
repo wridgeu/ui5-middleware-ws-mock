@@ -2019,3 +2019,79 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		).toBe(true);
 	});
 });
+
+describe("ws-mock middleware: attaching through the request path (UI5 Tooling 5)", () => {
+	type Middleware = (req: unknown, res: unknown, next: () => void) => void;
+	const request = (server: unknown): Parameters<Middleware>[0] => ({ socket: { server } });
+	const pass = (mw: Middleware, server: unknown): void => mw(request(server), {}, () => {});
+
+	it("serves upgrades after the first request even though the hook never fires", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		const mw = (await wsMock(args)) as Middleware;
+		// No fireHook(): Tooling 5 never calls app.listen, so the hook callback is silent.
+		expect(serverHandle.server.listenerCount("upgrade")).toBe(0);
+		pass(mw, serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		expect(await ready).toEqual(["READY"]);
+		ws.close();
+	});
+
+	it("attaches once per server however many requests pass through", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		const mw = (await wsMock(args)) as Middleware;
+		pass(mw, serverHandle.server);
+		pass(mw, serverHandle.server);
+		fireHook(serverHandle.server);
+
+		expect(serverHandle.server.listenerCount("upgrade")).toBe(1);
+	});
+
+	it("a re-created instance replaces the previous one on the same server", async () => {
+		const first = await wsMock(buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/old"));
+		pass(first as Middleware, serverHandle.server);
+		const second = await wsMock(buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/new"));
+		pass(second as Middleware, serverHandle.server);
+
+		expect(serverHandle.server.listenerCount("upgrade")).toBe(1);
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/new`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		expect(await ready).toEqual(["READY"]);
+		ws.close();
+		const stale = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/old`);
+		const status = await new Promise<number>((resolve) => {
+			stale.once("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+			stale.once("error", () => {});
+		});
+		expect(status).toBe(404);
+	});
+
+	it("keeps open mock connections alive when later requests pass through", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		const mw = (await wsMock(args)) as Middleware;
+		pass(mw, serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		await ready;
+		pass(mw, serverHandle.server);
+		const echo = waitForMessages(ws, 1);
+		ws.send("still here");
+		expect(await echo).toEqual(["ECHO:still here"]);
+		ws.close();
+	});
+
+	it("ignores a request that carries no server", async () => {
+		const mw = (await wsMock(
+			buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo"),
+		)) as Middleware;
+		const next = vi.fn();
+		mw({ socket: {} }, {}, next);
+		expect(next).toHaveBeenCalledOnce();
+		expect(serverHandle.server.listenerCount("upgrade")).toBe(0);
+	});
+});

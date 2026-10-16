@@ -18,9 +18,9 @@ jobs:
                 os: [ubuntu-latest, windows-latest]
                 node: [22, 24, 26]
                 include:
-                    # The declared engines floor (`>=22.18`); `22` above resolves to the newest 22.x.
-                    - { os: ubuntu-latest, node: "22.18" }
-                    - { os: windows-latest, node: "22.18" }
+                    # The declared engines floor (`^22.20.0 || >=24.0.0`); `22` above resolves to the newest 22.x.
+                    - { os: ubuntu-latest, node: "22.20" }
+                    - { os: windows-latest, node: "22.20" }
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         steps:
