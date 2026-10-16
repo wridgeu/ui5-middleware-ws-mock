@@ -65,7 +65,7 @@ get no upgrade, because nothing listens for `'upgrade'`.
   returned function's **direct-call** behaviour is replaced by `attachFromRequest`:
   it reads `req.socket.server` and attaches if this instance has not attached to that
   server yet. That is the path v5 exercises.
-- `attachedInstances` (a `WeakMap<Server, dispose>`) makes a re-created instance
+- `attachedInstances` (a `WeakMap<Server, Map<entry name, dispose>>`) makes a re-created instance
   dispose the previous one (remove its `'upgrade'` listener, restore `server.close`,
   terminate its clients) before attaching, so a v5 re-initialization does not stack
   listeners or keep stale routes.
@@ -97,6 +97,23 @@ get no upgrade, because nothing listens for `'upgrade'`.
   does not fire either, so that mode already had the first-request limitation.
 - The v5 internals described above are alpha-stage and may change again; the CI
   `next` leg exists to catch that.
+
+### Option evaluated: attach at listen time (not adopted)
+
+To remove the "WebSocket before first HTTP request" limitation, a `diagnostics_channel`
+prototype (`tracing:net.server.listen:asyncEnd`, plus the `ui5.server-listening`
+process event for the port) was tried on v4 and on 5.0.0-alpha.13:
+
+- Attaching to the first http/https server that listens is **unsafe** on v5: it picks
+  the live reload server (port 35729) or another plugin's server.
+- Matching the port from `ui5.server-listening` fixes that. A gap of about 3-7 ms
+  between listen and announcement remains. It leaks after a v5 stack rebuild unless the
+  server is remembered at module level, and it picks the wrong server when two servers
+  share a port number across IPv4/IPv6, unless the bind address is matched too.
+- Untested: v4 https/h2, a failing rebuild, browsers.
+
+Judged not worth the reliance on tooling internals for a limitation that only affects
+clients connecting before the page loads. Revisit if v5 ships a supported API.
 
 ## Validation
 
