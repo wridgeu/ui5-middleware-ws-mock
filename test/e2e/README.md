@@ -6,10 +6,10 @@ UI5 tooling harness. It proves the middleware's own logic but never boots a real
 provides: the factory parameters, `specVersion` acceptance, or the
 `ui5-utils-express` hook that reaches the underlying HTTP server.
 
-This harness closes that gap. [`run-v5-validation.mjs`](run-v5-validation.mjs):
+This harness closes that gap. [`run-cli-validation.mjs`](run-cli-validation.mjs):
 
 1. builds and packs the middleware from the repo root,
-2. copies the [`v5app/`](v5app) fixture to a temp directory and installs
+2. copies the [`app/`](app) fixture to a temp directory and installs
    `@ui5/cli` plus the packed tarball into the copy,
 3. boots `ui5 serve` against it, and
 4. connects real WebSocket clients to assert plain-mode echo, a parametrized
@@ -18,17 +18,18 @@ This harness closes that gap. [`run-v5-validation.mjs`](run-v5-validation.mjs):
 ## Run it
 
 ```bash
-npm run validate:v5
+npm run validate:cli
 ```
 
 Environment knobs:
 
-| Variable          | Default          | Purpose                                                  |
-| ----------------- | ---------------- | -------------------------------------------------------- |
-| `UI5_CLI_VERSION` | `^5.0.0-alpha.6` | npm version or dist-tag of `@ui5/cli` to install.        |
-| `KEEP_TMP`        | unset            | Set to `1` to leave the temp app in place for debugging. |
+| Variable          | Default  | Purpose                                                  |
+| ----------------- | -------- | -------------------------------------------------------- |
+| `UI5_CLI_VERSION` | `latest` | npm version or dist-tag of `@ui5/cli` to install.        |
+| `KEEP_TMP`        | unset    | Set to `1` to leave the temp app in place for debugging. |
 
 The middleware declares no `@ui5/*` dependency (the host `ui5 serve` process
 provides the runtime), so the CLI version under test lives in this harness, not
-in `package.json`. Point `UI5_CLI_VERSION` at the alpha today; bump the default
-to the GA release once it ships and re-run to re-validate.
+in `package.json`. CI runs the harness for `latest` (the stable 4.x line, required) and `next` (the
+5.x pre-release, informational) on every PR and weekly. Run it locally with
+`UI5_CLI_VERSION=next npm run validate:cli` (PowerShell: set `$env:UI5_CLI_VERSION` first).

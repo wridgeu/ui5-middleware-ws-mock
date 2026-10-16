@@ -8,13 +8,13 @@
 // server). This harness closes that gap: it installs the packed middleware next
 // to a real @ui5/cli, boots the server, and exercises the WebSocket wire.
 //
-// It is deliberately CLI-version agnostic. Point UI5_CLI_VERSION at the alpha
-// today and at the GA release once it ships; the same script re-validates. The
+// It is deliberately CLI-version agnostic. Point UI5_CLI_VERSION at any
+// supported major (the `latest` and `next` dist-tags cover v4 and the v5 pre-release). The
 // middleware declares no @ui5/* dependency (the host provides the runtime), so
 // the version under test lives here, not in package.json.
 //
-// Usage: node test/e2e/run-v5-validation.mjs
-//   UI5_CLI_VERSION  npm version/dist-tag to install (default: ^5.0.0-alpha.6)
+// Usage: node test/e2e/run-cli-validation.mjs
+//   UI5_CLI_VERSION  npm version/dist-tag to install (default: latest)
 //   KEEP_TMP=1       leave the temp app in place for inspection
 
 import { spawn, spawnSync } from "node:child_process";
@@ -26,8 +26,8 @@ import { WebSocket } from "ws";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
-const FIXTURE = join(HERE, "v5app");
-const CLI_VERSION = process.env.UI5_CLI_VERSION ?? "^5.0.0-alpha.6";
+const FIXTURE = join(HERE, "app");
+const CLI_VERSION = process.env.UI5_CLI_VERSION ?? "latest";
 const KEEP_TMP = process.env.KEEP_TMP === "1";
 const READY_TIMEOUT_MS = 90_000;
 const IS_WINDOWS = process.platform === "win32";
@@ -147,8 +147,8 @@ function check(name, pass, detail) {
 }
 
 async function main() {
-	console.log(`[v5-validation] @ui5/cli version under test: ${CLI_VERSION}`);
-	console.log(`[v5-validation] node ${process.version}`);
+	console.log(`[cli-validation] @ui5/cli version under test: ${CLI_VERSION}`);
+	console.log(`[cli-validation] node ${process.version}`);
 
 	// Build the current source so the pack ships fresh dist output.
 	run(NPM, ["run", "build"], { cwd: REPO_ROOT });
@@ -160,7 +160,7 @@ async function main() {
 		const tarball = packMiddleware(tmp);
 
 		console.log(
-			`[v5-validation] installing @ui5/cli@${CLI_VERSION} + packed middleware into ${app}`,
+			`[cli-validation] installing @ui5/cli@${CLI_VERSION} + packed middleware into ${app}`,
 		);
 		// Save to devDependencies (not --no-save): UI5 tooling discovers a custom
 		// middleware extension from the project's declared dependencies, so a
@@ -181,11 +181,11 @@ async function main() {
 		const installed = JSON.parse(
 			readFileSync(join(app, "node_modules", "@ui5", "cli", "package.json"), "utf8"),
 		).version;
-		console.log(`[v5-validation] resolved @ui5/cli to ${installed}`);
+		console.log(`[cli-validation] resolved @ui5/cli to ${installed}`);
 
 		const { child, url } = await bootServer(app);
 		const wsBase = url.replace(/^http/, "ws").replace(/\/$/, "");
-		console.log(`[v5-validation] server ready at ${url}`);
+		console.log(`[cli-validation] server ready at ${url}`);
 		try {
 			await assertPlainEcho(wsBase);
 			await assertParams(wsBase);
@@ -195,17 +195,17 @@ async function main() {
 		}
 	} finally {
 		if (KEEP_TMP) {
-			console.log(`[v5-validation] KEEP_TMP set; left temp app at ${app}`);
+			console.log(`[cli-validation] KEEP_TMP set; left temp app at ${app}`);
 		} else {
 			rmSync(tmp, { recursive: true, force: true });
 		}
 	}
 
 	if (failures.length > 0) {
-		console.error(`\n[v5-validation] FAILED: ${failures.join(", ")}`);
+		console.error(`\n[cli-validation] FAILED: ${failures.join(", ")}`);
 		process.exit(1);
 	}
-	console.log(`\n[v5-validation] all checks passed under @ui5/cli ${CLI_VERSION}`);
+	console.log(`\n[cli-validation] all checks passed under @ui5/cli ${CLI_VERSION}`);
 }
 
 main().catch((err) => {

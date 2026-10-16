@@ -1,7 +1,7 @@
 {
 	"_version": "1.65.0",
 	"sap.app": {
-		"id": "v5app",
+		"id": "app",
 		"type": "application",
 		"applicationVersion": {
 			"version": "1.0.0"

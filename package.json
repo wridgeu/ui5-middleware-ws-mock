@@ -50,7 +50,7 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",
-		"validate:v5": "node test/e2e/run-v5-validation.mjs",
+		"validate:cli": "node test/e2e/run-cli-validation.mjs",
 		"pack:check": "npm pack --dry-run",
 		"commitlint": "commitlint --last",
 		"prepare": "husky",

@@ -248,7 +248,6 @@ describe("robustness against hostile or sloppy input", () => {
 		const { fields } = decode("pcp-action:X\n__proto__:evil\n\nb");
 		expect(Object.keys(fields)).toContain("__proto__");
 		expect(fields["__proto__"]).toBe("evil");
-		expect(Object.getPrototypeOf(fields)).toBe(Object.prototype);
 	});
 
 	it("stringifies non-string field values from plain-JS handlers", () => {

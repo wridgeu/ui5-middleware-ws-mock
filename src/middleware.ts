@@ -670,6 +670,9 @@ export default async function wsMock({
 			// instead of hanging; with other listeners (livereload, ...) stay silent.
 			const reject = (): void => {
 				if (server.listenerCount("upgrade") === 1) {
+					// Node leaves a handed-over socket without an 'error' listener; a client
+					// reset mid-write would otherwise be an uncaught exception.
+					socket.on("error", () => socket.destroy());
 					socket.once("finish", () => socket.destroy());
 					socket.end(
 						"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
@@ -706,14 +709,7 @@ export default async function wsMock({
 		// pre-close event, so drop the mock clients just before the real close runs.
 		const closeServer = server.close.bind(server);
 		server.close = (callback) => {
-			for (const client of wss.clients) {
-				try {
-					client.terminate();
-				} catch (err) {
-					log.warn("[ws-mock] terminate on shutdown threw:", err);
-				}
-			}
-			wss.close();
+			for (const client of wss.clients) client.terminate();
 			return closeServer(callback);
 		};
 

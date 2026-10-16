@@ -1812,10 +1812,11 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 	it("stays silent on an unclaimed upgrade when another upgrade listener exists", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
 		await wsMock(args);
-		// A coexisting listener (e.g. livereload) that declines this path.
+		fireHook(serverHandle.server);
+		// A coexisting listener (e.g. livereload) that registers after ws-mock and
+		// declines this path: ws-mock must count listeners per request, not once.
 		const seen: Duplex[] = [];
 		serverHandle.server.on("upgrade", (_req, socket) => seen.push(socket));
-		fireHook(serverHandle.server);
 
 		const bytes: Buffer[] = [];
 		const sock = netConnect(serverHandle.port, "127.0.0.1");
@@ -1839,7 +1840,7 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		expect(await statusOf(ws)).toBe(404);
 	});
 
-	it("runs onMessage and onClose only after an async onConnect has settled", async () => {
+	it("runs onMessage only after an async onConnect has settled", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/slow-connect.ts", "/ws/slow");
 		await wsMock(args);
 		fireHook(serverHandle.server);
@@ -1850,10 +1851,25 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		ws.send("immediately");
 		expect(await reply).toEqual(["ready=true"]);
 		ws.close();
+	});
+
+	it("runs onClose only after an async onConnect has settled", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/slow-connect.ts", "/ws/slow");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		// Close before the 30ms onConnect finishes: without the gate onClose would
+		// log `ready=undefined`.
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/slow`);
+		await waitForOpen(ws);
+		ws.close();
 		await waitForLog(
 			args.entries,
-			(e) => e.level === "info" && String(e.args.join(" ")).includes("closed ready=true"),
+			(e) => e.level === "info" && String(e.args.join(" ")).includes("closed ready="),
 		);
+		expect(
+			args.entries.some((e) => String(e.args.join(" ")).includes("closed ready=true")),
+		).toBe(true);
 	});
 
 	it("server.close() terminates open mock clients instead of waiting on them", async () => {
