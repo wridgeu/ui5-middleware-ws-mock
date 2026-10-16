@@ -727,6 +727,7 @@ The cost is the coupling to the hook trick. A future UI5 tooling major bump that
 
 ## Limitations
 
+- **No `Origin` check.** The mock accepts WebSocket upgrades from any origin. That is fine on `localhost`, but with `ui5 serve --accept-remote-connections` any web page a developer visits could open a socket to the mock from their browser. Keep the mock reachable only from the local machine, or reject unwanted origins yourself in `onConnect` via `ctx.req.headers.origin` and `ctx.close()`.
 - **Handler modules are imported once at server start.** Each route's handler is loaded via dynamic `import()` during `ui5 serve` startup; the module is then cached in Node's ESM loader for the process lifetime. Picking up handler edits requires a `ui5 serve` restart. A process supervisor such as `tsx watch` or `nodemon --watch <handlers-dir>` automates this. Adding the handler directory to `ui5-middleware-livereload`'s `watchPath` reloads the browser when files change but does not restart the server.
 - **One handler module per route.** No chaining or composition is performed by the middleware. Layered behavior should be composed inside the handler module.
 - **Mount-path matching is path-only.** Patterns match the request pathname via `path-to-regexp` (see [Parametrized mount paths](#parametrized-mount-paths)). The query string is not part of matching; read it from `req.url` inside the handler. The syntax is `path-to-regexp` (Express), not UI5's client-side hash-routing syntax.

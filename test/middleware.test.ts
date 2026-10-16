@@ -1897,6 +1897,29 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		).toBe(true);
 	});
 
+	it("server.close() terminates the clients of every ws-mock entry on the server", async () => {
+		const own = await startServer();
+		const sockets: WebSocket[] = [];
+		for (const [name, path] of [
+			["ws-a", "/ws/a"],
+			["ws-b", "/ws/b"],
+		] as const) {
+			const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", path);
+			await wsMock({ ...args, options: { ...args.options, middlewareName: name } });
+			fireHook(own.server);
+			const ws = new WebSocket(`ws://127.0.0.1:${own.port}${path}`);
+			await waitForOpen(ws);
+			sockets.push(ws);
+		}
+		const closed = sockets.map((ws) => new Promise<void>((r) => ws.once("close", () => r())));
+		const outcome = await Promise.race([
+			own.close().then(() => "closed"),
+			new Promise((r) => setTimeout(() => r("hung"), 2000)),
+		]);
+		expect(outcome).toBe("closed");
+		await Promise.all(closed);
+	});
+
 	it("server.close() terminates open mock clients instead of waiting on them", async () => {
 		const own = await startServer();
 		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
