@@ -11,10 +11,6 @@ on:
     pull_request:
         branches: [main]
     workflow_dispatch:
-    schedule:
-        # Weekly, so a new @ui5/cli release that breaks the contract surfaces on
-        # its own rather than waiting for the next PR.
-        - cron: "0 6 * * 1"
 
 permissions:
     contents: read
