@@ -23,17 +23,29 @@ not a dependency bump.
 
 ## Findings (against 5.0.0-alpha.13)
 
-| Contract point                                                  | v4 (4.0.x)          | v5 (5.0.0-alpha.13)      | Impact                                |
-| --------------------------------------------------------------- | ------------------- | ------------------------ | ------------------------------------- |
-| `@ui5/server` Express major                                     | Express `4.22.1`    | Express `4.22.2`         | Hook trick unaffected.                |
-| `specVersion: "4.0"` acceptance                                 | accepted            | accepted                 | No `ui5.yaml` change.                 |
-| `MiddlewareUtil` (`getProject`, `getRootPath`, `getSourcePath`) | present             | present                  | Path resolution unchanged.            |
-| Native TS handler loading (type strip)                          | Node ≥ 22.18        | Node ≥ 22.18             | Handlers load unchanged.              |
-| Engine floor (`engines.node`)                                   | `≥ 20.11 \|\| ≥ 22` | `^22.20.0 \|\| >=24.0.0` | **Only breaking change** (see below). |
+| Contract point                                                  | v4 (4.0.x)          | v5 (5.0.0-alpha.13)                                                                                      | Impact                                                                                            |
+| --------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| HTTP server creation                                            | `app.listen()`      | **`Supervisor` calls `http.createServer(dispatcher)`; `app.listen` is never called** (alpha.6 still did) | **Breaks the `ui5-utils-express` hook**: `callback` never fires, no upgrade listener is attached. |
+| `@ui5/server` Express major                                     | Express `4.22.1`    | Express `5.x` (alpha.13)                                                                                 | Hook already handles `app.router`.                                                                |
+| `specVersion: "4.0"` acceptance                                 | accepted            | accepted                                                                                                 | No `ui5.yaml` change.                                                                             |
+| `MiddlewareUtil` (`getProject`, `getRootPath`, `getSourcePath`) | present             | present                                                                                                  | Path resolution unchanged.                                                                        |
+| Native TS handler loading (type strip)                          | Node ≥ 22.18        | Node ≥ 22.18                                                                                             | Handlers load unchanged.                                                                          |
+| Engine floor (`engines.node`)                                   | `≥ 20.11 \|\| ≥ 22` | `^22.20.0 \|\| >=24.0.0`                                                                                 | **Only breaking change** (see below).                                                             |
 
-Everything the middleware touches is stable across the two majors. The single
-consequential difference is the CLI's engine requirement rising to
-`^22.20.0 || >=24.0.0`.
+**Update 2026-10-16: the earlier "contract is stable" conclusion no longer holds.**
+The contract was verified against `5.0.0-alpha.6`. Against `5.0.0-alpha.13` the
+middleware loads its handlers but never attaches to the HTTP server, so every
+WebSocket upgrade is ignored (the e2e harness reports all three checks failing).
+Root cause: `@ui5/server`'s `Supervisor` owns a stable HTTP server created with
+`http.createServer(dispatcher)` and builds per-stack `express()` apps that are never
+listened on, so the `app.listen` interception the hook relies on cannot fire.
+
+A workaround was prototyped and works on alpha.13: take the server from
+`req.socket.server` on the first HTTP request that reaches the middleware and attach
+the upgrade listener there. Caveats: it needs one HTTP request before the first
+WebSocket (always true for a page that opens its own socket), and v5 re-creates the
+middleware on stack swaps (`reinitialize`) against the same server, so a real
+implementation must de-duplicate the listener per server. Not implemented yet.
 
 ## Validation
 

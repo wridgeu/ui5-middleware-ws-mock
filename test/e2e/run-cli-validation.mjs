@@ -99,11 +99,33 @@ function stopServer(child) {
 	}
 }
 
+// Rejects after EVENT_TIMEOUT_MS so a server that never answers (e.g. the middleware
+// failed to attach to the HTTP server) fails the check instead of hanging the run.
+const EVENT_TIMEOUT_MS = 5_000;
 function nextEvent(ws, event) {
 	return new Promise((res, rej) => {
-		ws.once(event, res);
-		ws.once("error", rej);
+		const timer = setTimeout(
+			() => rej(new Error(`no "${event}" within ${EVENT_TIMEOUT_MS}ms`)),
+			EVENT_TIMEOUT_MS,
+		);
+		ws.once(event, (value) => {
+			clearTimeout(timer);
+			res(value);
+		});
+		ws.once("error", (err) => {
+			clearTimeout(timer);
+			rej(err);
+		});
 	});
+}
+
+// Runs one assertion; a thrown error or timeout is recorded as a failed check.
+async function attempt(name, fn) {
+	try {
+		await fn();
+	} catch (err) {
+		check(name, false, String(err?.message ?? err));
+	}
 }
 
 async function assertPlainEcho(wsBase) {
@@ -187,9 +209,9 @@ async function main() {
 		const wsBase = url.replace(/^http/, "ws").replace(/\/$/, "");
 		console.log(`[cli-validation] server ready at ${url}`);
 		try {
-			await assertPlainEcho(wsBase);
-			await assertParams(wsBase);
-			await assertPcp(wsBase);
+			await attempt("plain /ws/echo", () => assertPlainEcho(wsBase));
+			await attempt("params /ws/notify/:userId", () => assertParams(wsBase));
+			await attempt("pcp negotiation", () => assertPcp(wsBase));
 		} finally {
 			stopServer(child);
 		}
