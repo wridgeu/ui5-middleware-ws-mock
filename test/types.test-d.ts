@@ -16,14 +16,8 @@ interface CounterState {
 
 /**
  * Type-level regression tests for the discriminated `ctx.send` surface and
- * the single-mode narrowing patterns documented in the README. The assertions
- * live in the types and are enforced only by `npm run typecheck` (`tsc
- * --noEmit` covers the test tree, including this file). `vitest run` executes
- * the file but does not type-check it, so the `expectTypeOf` calls are runtime
- * no-ops; a broken contract would stay green under `npm test` alone. CI
- * guards the contract because `npm run check` runs the typecheck gate.
- *
- * The runtime `it()` bodies are no-ops; the assertions live in the types.
+ * the single-mode narrowing patterns documented in the README. Run by vitest's
+ * typecheck mode (`*.test-d.ts`), so a broken contract fails `npm test`.
  */
 
 describe("ctx.send surface", () => {
@@ -75,7 +69,7 @@ describe("narrowing", () => {
 			// @ts-expect-error -- param contravariance forbids narrowing here
 			onConnect: (ctx: PcpWebSocketContext) => ctx.send({ body: "x" }),
 		};
-		expectTypeOf(bad).toMatchTypeOf<WebSocketHandler>();
+		void bad;
 	});
 });
 

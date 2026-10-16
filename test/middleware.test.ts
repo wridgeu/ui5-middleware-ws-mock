@@ -1674,3 +1674,120 @@ describe("ws-mock middleware: defensive paths (non-feature)", () => {
 		ws.close();
 	});
 });
+
+describe("ws-mock middleware: behaviour pinned by fault injection", () => {
+	it("never advertises the PCP subprotocol to a client that did not offer it", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		// ws validates the negotiated protocol itself and errors the client, which
+		// would mask a server that wrongly echoes SUBPROTOCOL; read the raw response.
+		const ws = new WebSocket(
+			`ws://127.0.0.1:${serverHandle.port}/ws/echo`,
+			"unknown.subprotocol.example",
+		);
+		const header = await new Promise<string | undefined>((resolve) => {
+			ws.once("upgrade", (res) => resolve(res.headers["sec-websocket-protocol"]));
+			ws.once("error", () => {});
+		});
+		expect(header).toBeUndefined();
+	});
+
+	it("serves plain mode when the client offers no subprotocol", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		expect(ws.protocol).toBe("");
+		expect(await ready).toEqual(["READY"]);
+		ws.close();
+	});
+
+	it("ctx.close() without arguments closes with code 1000", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/close-default.ts", "/ws/close");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/close`);
+		await waitForOpen(ws);
+		const closed = new Promise<{ code: number; reason: string }>((resolve) =>
+			ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() })),
+		);
+		ws.send("go");
+		expect(await closed).toEqual({ code: 1000, reason: "" });
+	});
+
+	it("logs the close code and reason at info", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/echo`);
+		await waitForOpen(ws);
+		ws.close(4001, "bye");
+		await waitForLog(
+			args.entries,
+			(e) => e.level === "info" && String(e.args.join(" ")).includes("close 4001 bye"),
+		);
+	});
+
+	it("reassembles a message that arrives as several fragments", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo-binarytype.ts", "/ws/frag");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/frag?bt=fragments`);
+		await waitForOpen(ws);
+		const reply = waitForMessages(ws, 1);
+		ws.send(Buffer.from("hel"), { binary: true, fin: false });
+		ws.send(Buffer.from("lo"), { binary: true, fin: true });
+		expect(await reply).toEqual(["ECHO:hello"]);
+		ws.close();
+	});
+
+	it("a route with an unparsable pattern does not block later routes", async () => {
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [
+						{ mountPath: "/ws/:opt?", handler: "test/fixtures/handlers/echo.ts" },
+						{ mountPath: "/ws/ok", handler: "test/fixtures/handlers/echo.ts" },
+					],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+		fireHook(serverHandle.server);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/ok`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		expect(await ready).toEqual(["READY"]);
+		expect(entries.some((e) => e.level === "error" || e.level === "warn")).toBe(true);
+		ws.close();
+	});
+
+	it("warns about a pattern that opens with a parameter", async () => {
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					routes: [{ mountPath: "{:a}/x", handler: "test/fixtures/handlers/echo.ts" }],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+		expect(
+			entries.some(
+				(e) => e.level === "warn" && String(e.args.join(" ")).includes("no leading static"),
+			),
+		).toBe(true);
+	});
+});

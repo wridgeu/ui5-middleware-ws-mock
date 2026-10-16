@@ -74,6 +74,10 @@ describe("pcpUnescape", () => {
 });
 
 describe("pcpEscape / pcpUnescape round-trip", () => {
+	it("preserves carriage returns", () => {
+		expect(pcpUnescape(pcpEscape("a\rb"))).toBe("a\rb");
+	});
+
 	it("round-trips ascii", () => {
 		expect(pcpUnescape(pcpEscape("hello"))).toBe("hello");
 	});
