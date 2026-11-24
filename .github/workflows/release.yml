@@ -14,18 +14,19 @@ concurrency:
     group: release-${{ github.ref }}
     cancel-in-progress: false
 
-permissions:
-    contents: write
-    pull-requests: write
-    id-token: write
+permissions: {}
 
 jobs:
     release-please:
         runs-on: ubuntu-latest
+        timeout-minutes: 10
+        permissions:
+            contents: write
+            pull-requests: write
         outputs:
             release_created: ${{ steps.release.outputs.release_created }}
         steps:
-            - uses: googleapis/release-please-action@v4
+            - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
               id: release
               with:
                   config-file: release-please-config.json
@@ -40,12 +41,14 @@ jobs:
             contents: read
             id-token: write
         steps:
-            - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
 
-            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version: 24
-                  cache: npm
+                  package-manager-cache: false
                   registry-url: https://registry.npmjs.org
 
             - run: npm ci
