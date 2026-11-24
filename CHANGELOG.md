@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.6.0...v0.7.0) (2026-11-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* Minimum supported Node.js version is now >=24 (Node.js 22 is no longer supported).
+
+### Features
+
+* drop Node.js 22 support and require Node.js &gt;=24 ([#37](https://github.com/wridgeu/ui5-middleware-ws-mock/issues/37)) ([7594e43](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/7594e439d2009fbd3c368afd7b20ba1538569236))
+
 ## [0.6.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.5.2...v0.6.0) (2026-11-24)
 
 
