@@ -220,7 +220,9 @@ async function main() {
 			// A real app loads its page before opening a socket. Under @ui5/cli 5 that first
 			// HTTP request is how the middleware learns the server (see src/middleware.ts).
 			await attempt("http GET /index.html", async () => {
-				const res = await fetch(new URL("index.html", url));
+				const res = await fetch(new URL("index.html", url), {
+					signal: AbortSignal.timeout(EVENT_TIMEOUT_MS),
+				});
 				check("http GET /index.html", res.ok, `status=${res.status}`);
 			});
 			await attempt("plain /ws/echo", () => assertPlainEcho(wsBase));

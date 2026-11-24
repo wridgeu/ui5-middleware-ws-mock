@@ -2248,4 +2248,45 @@ describe("ws-mock middleware: attaching through the request path (UI5 Tooling 5)
 		expect(next).toHaveBeenCalledTimes(2);
 		expect(serverHandle.server.listenerCount("upgrade")).toBe(0);
 	});
+
+	it("disposes a previous instance when re-initialized with no routes", async () => {
+		const first = await wsMock(buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/old"));
+		pass(first as Middleware, serverHandle.server);
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/old`);
+		await waitForOpen(ws);
+		const closed = new Promise<void>((r) => ws.once("close", () => r()));
+
+		const emptyArgs = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/old");
+		emptyArgs.options.configuration = { routes: [] };
+		const next = vi.fn();
+		const emptyMw = (await wsMock(emptyArgs)) as Middleware;
+		emptyMw(request(serverHandle.server), {}, next);
+
+		await closed;
+		expect(next).toHaveBeenCalledOnce();
+		expect(serverHandle.server.listenerCount("upgrade")).toBe(0);
+	});
+
+	it("does not stack server.close wrappers across repeated re-initializations", async () => {
+		const own = await startServer();
+		const entry = async (name: string, path: string) => {
+			const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", path);
+			pass(
+				(await wsMock({
+					...args,
+					options: { ...args.options, middlewareName: name },
+				})) as Middleware,
+				own.server,
+			);
+		};
+		await entry("ws-a", "/ws/a");
+		const closeAfterFirst = own.server.close;
+		await entry("ws-b", "/ws/b");
+		for (let i = 0; i < 3; i++) {
+			await entry("ws-a", "/ws/a");
+			await entry("ws-b", "/ws/b");
+		}
+		expect(own.server.close).toBe(closeAfterFirst);
+		await own.close();
+	});
 });

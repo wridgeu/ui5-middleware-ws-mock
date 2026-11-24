@@ -114,14 +114,45 @@ interface HookCallbackArgs {
 	server: Server;
 }
 
+interface AttachedInstance {
+	dispose: () => void;
+	terminateClients: () => void;
+}
+
 /**
- * Per HTTP server and `customMiddleware` entry name, the teardown of the instance
- * currently attached. UI5 Tooling 5 re-creates every middleware against the same
- * server on each re-initialization, so a new instance first disposes the previous
- * one with the same name instead of stacking a second `'upgrade'` listener. Entries
- * with different names (UI5 suffixes duplicates) coexist.
+ * Per HTTP server and `customMiddleware` entry name, the teardown hooks of the
+ * instance currently attached. UI5 Tooling 5 re-creates every middleware against
+ * the same server on each re-initialization, so a new instance first disposes
+ * the previous one with the same name instead of stacking a second `'upgrade'`
+ * listener. Entries with different names (UI5 suffixes duplicates) coexist.
  */
-const attachedInstances = new WeakMap<Server, Map<string, () => void>>();
+const attachedInstances = new WeakMap<Server, Map<string, AttachedInstance>>();
+
+/**
+ * Returns the per-server instance map, wrapping `server.close` once on first
+ * access so active mock clients are terminated before shutdown without stacking
+ * close wrappers across repeated Tooling 5 re-initializations or clobbering a
+ * wrapper another plugin installs later.
+ */
+function getServerInstances(server: Server): Map<string, AttachedInstance> {
+	let instances = attachedInstances.get(server);
+	if (!instances) {
+		instances = new Map();
+		attachedInstances.set(server, instances);
+		// Upgraded sockets keep `server.close()` from ever finishing and Node has no
+		// pre-close event, so drop every active entry's mock clients just before
+		// the real close runs.
+		const originalClose = server.close;
+		const active = instances;
+		server.close = function (this: Server, callback?: (err?: Error) => void): Server {
+			for (const instance of active.values()) {
+				instance.terminateClients();
+			}
+			return originalClose.call(this, callback);
+		};
+	}
+	return instances;
+}
 
 /** Route-scoped log prefix, e.g. `[ws-mock:/ws/foo]`. */
 function routeTag(mountPath: string): string {
@@ -627,13 +658,24 @@ export default async function wsMock({
 			return ok;
 		},
 	);
+	const entryName = options.middlewareName ?? "ui5-middleware-ws-mock";
 	if (routes.length === 0) {
 		log.warn("[ws-mock] no routes configured; middleware is a no-op");
 		// Return a plain pass-through without hooking the HTTP server: attaching an
 		// idle upgrade listener would bump `server.listenerCount("upgrade")` and
 		// disable another ws-mock entry's sole-listener 404 fallback, and skipping
 		// `getProject().getSourcePath()` avoids crashing on Module-type projects.
-		return (_req: unknown, _res: unknown, next: () => void) => next();
+		// If a prior instance of this entry was attached on the same server (Tooling 5
+		// re-initialization after clearing `routes`), dispose it on the first request.
+		return (req: IncomingMessage, _res: unknown, next: () => void) => {
+			const server = (req?.socket as { server?: Server } | undefined)?.server;
+			if (server) {
+				const instances = attachedInstances.get(server);
+				instances?.get(entryName)?.dispose();
+				instances?.delete(entryName);
+			}
+			next();
+		};
 	}
 
 	// Validate `rootPath` at the ui5.yaml trust boundary: an empty YAML key
@@ -660,14 +702,12 @@ export default async function wsMock({
 	// is declaration-order, first-match-wins.
 	reportRouteDiagnostics(loaded, log);
 
-	const entryName = options.middlewareName ?? "ui5-middleware-ws-mock";
 	const attachedServers = new WeakSet<Server>();
 	const attach = (server: Server): void => {
 		if (attachedServers.has(server)) return;
 		attachedServers.add(server);
-		const instances = attachedInstances.get(server) ?? new Map<string, () => void>();
-		attachedInstances.set(server, instances);
-		instances.get(entryName)?.();
+		const instances = getServerInstances(server);
+		instances.get(entryName)?.dispose();
 		const wss = new WebSocketServer({
 			noServer: true,
 			handleProtocols: (protocols: Set<string>): string | false =>
@@ -743,9 +783,6 @@ export default async function wsMock({
 		};
 		server.on("upgrade", onUpgrade);
 
-		// Upgraded sockets keep `server.close()` from ever finishing and Node has no
-		// pre-close event, so drop the mock clients just before the real close runs.
-		const originalClose = server.close;
 		const terminateClients = (): void => {
 			for (const client of wss.clients) {
 				try {
@@ -755,17 +792,13 @@ export default async function wsMock({
 				}
 			}
 		};
-		const closeWithCleanup = function (this: Server, callback?: (err?: Error) => void): Server {
-			terminateClients();
-			return originalClose.call(this, callback);
-		};
-		server.close = closeWithCleanup;
-		instances.set(entryName, () => {
-			server.off("upgrade", onUpgrade);
-			// Another plugin may have wrapped `close` since; leave its wrapper in place.
-			if (server.close === closeWithCleanup) server.close = originalClose;
-			terminateClients();
-			wss.close();
+		instances.set(entryName, {
+			terminateClients,
+			dispose: () => {
+				server.off("upgrade", onUpgrade);
+				terminateClients();
+				wss.close();
+			},
 		});
 
 		// List only routes that can actually match; a route whose pattern failed
@@ -785,7 +818,7 @@ export default async function wsMock({
 	// opened before any HTTP request reaches the middleware is therefore not served
 	// under Tooling 5.
 	const attachFromRequest = (req: IncomingMessage, _res: unknown, next: () => void): void => {
-		const server = (req.socket as { server?: Server } | undefined)?.server;
+		const server = (req?.socket as { server?: Server } | undefined)?.server;
 		if (server) attach(server);
 		next();
 	};

@@ -65,10 +65,11 @@ get no upgrade, because nothing listens for `'upgrade'`.
   returned function's **direct-call** behaviour is replaced by `attachFromRequest`:
   it reads `req.socket.server` and attaches if this instance has not attached to that
   server yet. That is the path v5 exercises.
-- `attachedInstances` (a `WeakMap<Server, Map<entry name, dispose>>`) makes a re-created instance
-  dispose the previous one (remove its `'upgrade'` listener, restore `server.close`,
-  terminate its clients) before attaching, so a v5 re-initialization does not stack
-  listeners or keep stale routes.
+- `attachedInstances` (a `WeakMap<Server, Map<entry name, { dispose, terminateClients }>>`)
+  makes a re-created instance dispose the previous one (remove its `'upgrade'` listener,
+  terminate its clients, close its `WebSocketServer`) before attaching, so a v5
+  re-initialization does not stack listeners or keep stale routes; `server.close` is wrapped
+  once per server so repeated re-initializations do not accumulate close wrappers.
 - The e2e harness does an HTTP `GET /index.html` before opening sockets, as a real
   page would.
 
@@ -149,7 +150,7 @@ not disturb open mock connections.
       middleware and prefer it over the socket lookup.
 - [ ] Decide what to do about the "WebSocket before first HTTP request" limitation
       (document it, or use the supported API from the previous item).
-- [ ] Check `ui5 serve --h2` and re-initialization (edit `ui5.yaml` while serving)
+- [ ] Check `ui5 serve --https` and re-initialization (edit `ui5.yaml` while serving)
       manually.
 - [ ] Make the `next` CI leg required (or point the legs at the released 5.x and a
       pinned `^4`).

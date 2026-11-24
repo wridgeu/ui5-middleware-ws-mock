@@ -47,7 +47,7 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 
 | `ui5-middleware-ws-mock` | UI5 Tooling specVersion | `@ui5/cli`     | Node                     | TypeScript (optional) |
 | ------------------------ | ----------------------- | -------------- | ------------------------ | --------------------- |
-| `≤ 0.5.x`                | `4.0`                   | `4.x`          | `≥ 22.18`                | `~ 6.0`               |
+| `≤ 0.5.x`                | `4.0`                   | `4.x`          | `≥ 22.18`                | `~ 6.0` / `~ 7.0`     |
 | `≥ 0.6.0`                | `4.0`                   | `4.x` \| `5.x` | `^22.20.0 \|\| >=24.0.0` | `~ 7.0`               |
 
 **UI5 Tooling 4 & 5.** One package line targets `@ui5/cli` 4.x and the 5.x pre-release. `@ui5/cli` 5 no longer exposes the `app.listen` hook this middleware used, so on 5.x the middleware discovers the HTTP server from the first request that reaches it: a WebSocket opened before any HTTP request is not served until one has. This is validated against a real `ui5 serve` in CI (`@ui5/cli` `latest`, required; `next`, informational) by [`test/e2e`](test/e2e) (`npm run validate:cli`); [`docs/specs/2026-07-17-ui5-tooling-v5-support.md`](docs/specs/2026-07-17-ui5-tooling-v5-support.md) records what was tried and the remaining work.
