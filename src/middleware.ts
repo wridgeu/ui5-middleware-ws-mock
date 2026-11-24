@@ -31,6 +31,7 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { IncomingMessage, Server } from "node:http";
+import type { Duplex } from "node:stream";
 import { Buffer } from "node:buffer";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
@@ -92,7 +93,7 @@ interface FactoryParameters {
 	options: {
 		/** Value of `customMiddleware[].configuration` as declared in `ui5.yaml`. */
 		configuration?: Partial<WebSocketMiddlewareConfiguration>;
-		/** Middleware name from `ui5.yaml` (unused here; UI5 tooling always provides it). */
+		/** Unique name of this `customMiddleware` entry; identifies it across re-initializations. */
 		middlewareName?: string;
 	};
 	/**
@@ -111,6 +112,46 @@ interface FactoryParameters {
 
 interface HookCallbackArgs {
 	server: Server;
+}
+
+interface AttachedInstance {
+	dispose: () => void;
+	terminateClients: () => void;
+}
+
+/**
+ * Per HTTP server and `customMiddleware` entry name, the teardown hooks of the
+ * instance currently attached. UI5 Tooling 5 re-creates every middleware against
+ * the same server on each re-initialization, so a new instance first disposes
+ * the previous one with the same name instead of stacking a second `'upgrade'`
+ * listener. Entries with different names (UI5 suffixes duplicates) coexist.
+ */
+const attachedInstances = new WeakMap<Server, Map<string, AttachedInstance>>();
+
+/**
+ * Returns the per-server instance map, wrapping `server.close` once on first
+ * access so active mock clients are terminated before shutdown without stacking
+ * close wrappers across repeated Tooling 5 re-initializations or clobbering a
+ * wrapper another plugin installs later.
+ */
+function getServerInstances(server: Server): Map<string, AttachedInstance> {
+	let instances = attachedInstances.get(server);
+	if (!instances) {
+		instances = new Map();
+		attachedInstances.set(server, instances);
+		// Upgraded sockets keep `server.close()` from ever finishing and Node has no
+		// pre-close event, so drop every active entry's mock clients just before
+		// the real close runs.
+		const originalClose = server.close;
+		const active = instances;
+		server.close = function (this: Server, callback?: (err?: Error) => void): Server {
+			for (const instance of active.values()) {
+				instance.terminateClients();
+			}
+			return originalClose.call(this, callback);
+		};
+	}
+	return instances;
 }
 
 /** Route-scoped log prefix, e.g. `[ws-mock:/ws/foo]`. */
@@ -617,13 +658,24 @@ export default async function wsMock({
 			return ok;
 		},
 	);
+	const entryName = options.middlewareName ?? "ui5-middleware-ws-mock";
 	if (routes.length === 0) {
 		log.warn("[ws-mock] no routes configured; middleware is a no-op");
 		// Return a plain pass-through without hooking the HTTP server: attaching an
 		// idle upgrade listener would bump `server.listenerCount("upgrade")` and
 		// disable another ws-mock entry's sole-listener 404 fallback, and skipping
 		// `getProject().getSourcePath()` avoids crashing on Module-type projects.
-		return (_req: unknown, _res: unknown, next: () => void) => next();
+		// If a prior instance of this entry was attached on the same server (Tooling 5
+		// re-initialization after clearing `routes`), dispose it on the first request.
+		return (req: IncomingMessage, _res: unknown, next: () => void) => {
+			const server = (req?.socket as { server?: Server } | undefined)?.server;
+			if (server) {
+				const instances = attachedInstances.get(server);
+				instances?.get(entryName)?.dispose();
+				instances?.delete(entryName);
+			}
+			next();
+		};
 	}
 
 	// Validate `rootPath` at the ui5.yaml trust boundary: an empty YAML key
@@ -650,7 +702,12 @@ export default async function wsMock({
 	// is declaration-order, first-match-wins.
 	reportRouteDiagnostics(loaded, log);
 
-	return hook("ui5-middleware-ws-mock", ({ server }: HookCallbackArgs) => {
+	const attachedServers = new WeakSet<Server>();
+	const attach = (server: Server): void => {
+		if (attachedServers.has(server)) return;
+		attachedServers.add(server);
+		const instances = getServerInstances(server);
+		instances.get(entryName)?.dispose();
 		const wss = new WebSocketServer({
 			noServer: true,
 			handleProtocols: (protocols: Set<string>): string | false =>
@@ -684,7 +741,7 @@ export default async function wsMock({
 			}
 		});
 
-		server.on("upgrade", (req, socket, head) => {
+		const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
 			// Once any `'upgrade'` listener exists Node no longer closes unclaimed
 			// upgrades itself. If ours is the only one, answer so the client fails fast
 			// instead of hanging; with other listeners (livereload, ...) stay silent.
@@ -723,12 +780,10 @@ export default async function wsMock({
 				// ws throws if another listener already upgraded this socket.
 				log.error(`[ws-mock] upgrade for ${pathname} failed:`, err);
 			}
-		});
+		};
+		server.on("upgrade", onUpgrade);
 
-		// Upgraded sockets keep `server.close()` from ever finishing and Node has no
-		// pre-close event, so drop the mock clients just before the real close runs.
-		const closeServer = server.close.bind(server);
-		server.close = (callback) => {
+		const terminateClients = (): void => {
 			for (const client of wss.clients) {
 				try {
 					client.terminate();
@@ -736,8 +791,15 @@ export default async function wsMock({
 					log.warn("[ws-mock] terminate on shutdown threw:", err);
 				}
 			}
-			return closeServer(callback);
 		};
+		instances.set(entryName, {
+			terminateClients,
+			dispose: () => {
+				server.off("upgrade", onUpgrade);
+				terminateClients();
+				wss.close();
+			},
+		});
 
 		// List only routes that can actually match; a route whose pattern failed
 		// to compile is disabled and never listens, so advertising it here misleads.
@@ -747,5 +809,25 @@ export default async function wsMock({
 				.map((entry) => entry.route.mountPath)
 				.join(", ") || "(none)";
 		log.info(`[ws-mock] listening for upgrades on: ${mountPaths}`);
-	});
+	};
+
+	// UI5 Tooling 4 reports its HTTP server through the `app.listen` hook. Tooling 5
+	// creates the server itself and never calls `app.listen`, so the hook callback
+	// stays silent and the hook's own request path only logs a failure. Instead the
+	// returned function takes the server from the first request's socket. A WebSocket
+	// opened before any HTTP request reaches the middleware is therefore not served
+	// under Tooling 5.
+	const attachFromRequest = (req: IncomingMessage, _res: unknown, next: () => void): void => {
+		const server = (req?.socket as { server?: Server } | undefined)?.server;
+		if (server) attach(server);
+		next();
+	};
+	const hooked = hook(
+		"ui5-middleware-ws-mock",
+		({ server }: HookCallbackArgs) => attach(server),
+		attachFromRequest,
+	);
+	// Keep the hook's mount protocol (`handle`/`set`/`emit`) but replace its direct-call
+	// behaviour, which is what Tooling 5 invokes.
+	return Object.assign(attachFromRequest.bind(null), hooked);
 }
