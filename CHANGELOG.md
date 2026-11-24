@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.5.1...v0.5.2) (2026-11-24)
+
+
+### Bug Fixes
+
+* validate rootPath/handler exports, make empty routes a true no-op ([#32](https://github.com/wridgeu/ui5-middleware-ws-mock/issues/32)) ([4a4f738](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/4a4f73871b357577ba9c13a5f22bddeb5c31c97b))
+
 ## [0.5.1](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.5.0...v0.5.1) (2026-10-16)
 
 
