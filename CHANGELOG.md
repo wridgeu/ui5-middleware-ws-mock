@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.5.2...v0.6.0) (2026-11-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** Upgraded path-to-regexp from v8 to v9. Multi-parameter single segments (e.g. /:a.:b matching /x.y.z) now match greedily on the last parameter ({ a: 'x', b: 'y.z' }) instead of the first ({ a: 'x.y', b: 'z' }), and patterns ending with a trailing slash (e.g. /ws/echo/) no longer match a duplicate trailing slash (/ws/echo//); patterns without a trailing slash still match both /ws/echo and /ws/echo/.
+
+### Features
+
+* **deps:** upgrade path-to-regexp to v9 and bump ws ([215747f](https://github.com/wridgeu/ui5-middleware-ws-mock/commit/215747f906b6637637e261ead67d747431a45292))
+
 ## [0.5.2](https://github.com/wridgeu/ui5-middleware-ws-mock/compare/v0.5.1...v0.5.2) (2026-11-24)
 
 
