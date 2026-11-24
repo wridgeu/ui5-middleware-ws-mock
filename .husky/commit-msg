@@ -1,2 +1,0 @@
-#!/bin/sh
-commitlint --edit "$1"

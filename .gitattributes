@@ -29,10 +29,10 @@
 *.sh       text eol=lf
 *.bash     text eol=lf
 
-# Husky hook scripts must stay LF on every platform: git refuses to run
+# Git hook scripts must stay LF on every platform: git refuses to run
 # hooks that begin with a CRLF shebang on POSIX shells, and lint-staged /
-# typecheck would silently stop firing on pre-commit.
-.husky/**  text eol=lf
+# commitlint would silently stop firing on commit.
+.githooks/** text eol=lf
 
 # Windows-native scripts: keep CRLF so cmd.exe / PowerShell execute them.
 *.bat      text eol=crlf

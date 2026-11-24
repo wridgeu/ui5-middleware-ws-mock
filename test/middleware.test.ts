@@ -822,7 +822,7 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 	});
 
 	it("an invalid mountPath pattern is disabled at startup with an error log and never matches", async () => {
-		// Legacy `:opt?` syntax is rejected by path-to-regexp v8 (optionality is
+		// Legacy `:opt?` syntax is rejected by path-to-regexp v8+ (optionality is
 		// `{...}`). The route compiles to null, is logged at error, and the
 		// factory still resolves; the handler itself loads fine.
 		const args = paramsRoute("/ws/:bad?");
@@ -983,7 +983,7 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 	});
 
 	it("warns when a mountPath declares duplicate parameter names", async () => {
-		// path-to-regexp v8 compiles `/ws/:id/:id` without error but keeps only
+		// path-to-regexp compiles `/ws/:id/:id` without error but keeps only
 		// the last `:id`, silently dropping the first segment's value.
 		const args = paramsRoute("/ws/:id/:id");
 		await wsMock(args);
