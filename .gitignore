@@ -7,7 +7,6 @@ coverage/
 .superpowers/
 docs/superpowers/
 .worktrees/
-.husky/_/
 
 .claude/
 .claude-scratch/
