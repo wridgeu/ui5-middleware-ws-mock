@@ -1,7 +1,7 @@
 # UI5 Tooling v5 support
 
 Status: **draft, tracking the `@ui5/cli` 5 pre-release** (`next` dist-tag,
-`5.0.0-alpha.13` at the time of writing, 2026-10-16). `latest` is still 4.0.x.
+`5.0.0-alpha.16` at the time of writing, 2026-11-24). `latest` is still 4.x (`4.1.0`).
 Finish this once `@ui5/cli` 5 is released; the checklist is at the end.
 
 Goal: support UI5 Tooling **4 and 5 from a single package line**, without bundling
@@ -27,7 +27,7 @@ supported range is documented and enforced by the CI matrix instead.
 
 ## What changed in v5 and what broke
 
-| Contract point                                                  | v4 (`4.0.x`)                                      | v5 (`5.0.0-alpha.13`)                                                                                      | Effect                                                                                                               |
+| Contract point                                                  | v4 (`4.x`)                                        | v5 (`5.0.0-alpha.16`)                                                                                      | Effect                                                                                                               |
 | --------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | HTTP server creation                                            | `express().listen()`                              | `Supervisor` calls `http.createServer(dispatcher)`; the per-stack `express()` app is **never listened on** | **Breaks the hook**: `app.listen` is never called, so our callback never fires and no upgrade listener is attached.  |
 | Express                                                         | 4.x                                               | 5.x                                                                                                        | Handled: the hook already reads `app.router`.                                                                        |
@@ -127,9 +127,10 @@ while v5 is a pre-release) on Node 24, Linux and Windows, on pull requests that 
 the code and on demand. There is deliberately no schedule, so a new `@ui5/cli` release
 that breaks the contract is only noticed on the next PR or manual run.
 
-Last local result (2026-10-16, Node 26): all checks pass on `@ui5/cli` 4.0.71 and
-5.0.0-alpha.13. Unit tests cover the request-path attach, per-server
-de-duplication, replacement of a re-created instance, and that later requests do
+Last local result (2026-11-24, Node 26): all checks pass on `@ui5/cli` 4.1.0 and
+5.0.0-alpha.16. Unit tests cover the request-path attach, per-server
+de-duplication, replacement of a re-created instance, disposal on empty-routes
+re-initialization, single `server.close` wrapping, and that later requests do
 not disturb open mock connections.
 
 ## Decision
