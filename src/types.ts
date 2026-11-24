@@ -282,7 +282,7 @@ export type RouteParams = Partial<Record<string, string | string[]>>;
 export interface WebSocketRoute {
 	/**
 	 * Mount path matched against the incoming upgrade request's pathname. Accepts
-	 * `path-to-regexp` v8 syntax (the same matcher Express 5 uses):
+	 * `path-to-regexp` v9 syntax (same pattern syntax Express 5 uses):
 	 *
 	 *   - Literal: `/ws/foo` (matches that pathname, trailing slash optional).
 	 *   - Named parameter: `/ws/notifications/:userId` (one path segment, surfaced
@@ -291,7 +291,7 @@ export interface WebSocketRoute {
 	 *   - Wildcard: `/ws/*splat` (matches one or more segments; `ctx.params.splat`
 	 *     is a `string[]`). Combine with braces for zero-or-more: `/ws{/*splat}`.
 	 *
-	 * Note the v8 syntax: there is no bare `*` and no trailing `?`; wildcards must
+	 * Note the v9 syntax: there is no bare `*` and no trailing `?`; wildcards must
 	 * be named and optionality is expressed with `{...}`. Routes are matched in
 	 * declaration order and the first match wins, so list more specific patterns
 	 * before broader ones. A pathname that matches no route is left for other

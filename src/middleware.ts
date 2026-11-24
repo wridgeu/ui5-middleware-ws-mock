@@ -72,7 +72,7 @@ interface LoadedRoute {
 	 * Parsed `mountPath` tokens, reused for the startup pattern-shape diagnostics.
 	 * Empty when the pattern failed to parse (`matchError` is set).
 	 */
-	tokens: Token[];
+	tokens: readonly Token[];
 }
 
 /** A route matched against an upgrade pathname, with its extracted params. */
@@ -126,7 +126,7 @@ function routeTag(mountPath: string): string {
  * coexistence contract. A bare-root literal (`/`) is scoped (it matches only
  * `/`), so it is not flagged.
  */
-function lacksStaticPrefix(tokens: Token[]): boolean {
+function lacksStaticPrefix(tokens: readonly Token[]): boolean {
 	const first = tokens[0];
 	if (!first || first.type !== "text") return true; // opens with a dynamic part
 	if (/[^/]/.test(first.value)) return false; // has a real literal segment
@@ -134,10 +134,10 @@ function lacksStaticPrefix(tokens: Token[]): boolean {
 }
 
 /** Param/wildcard names that appear more than once in the pattern (any depth). */
-function duplicateParamNames(tokens: Token[]): string[] {
+function duplicateParamNames(tokens: readonly Token[]): string[] {
 	const seen = new Set<string>();
 	const dupes = new Set<string>();
-	const walk = (ts: Token[]): void => {
+	const walk = (ts: readonly Token[]): void => {
 		for (const token of ts) {
 			if (token.type === "param" || token.type === "wildcard") {
 				if (seen.has(token.name)) dupes.add(token.name);
@@ -183,14 +183,14 @@ async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<
 	const absolutePath = resolve(handlerRoot, route.handler);
 
 	// Parse and compile the mount path once at startup. An invalid pattern (e.g.
-	// legacy `:opt?` syntax that v8 rejects) makes `parsePattern` throw; capture
+	// legacy `:opt?` syntax that v8+ rejects) makes `parsePattern` throw; capture
 	// it so the route is disabled with a startup error instead of crashing
 	// `ui5 serve`. The matcher is compiled from the same `TokenData`, and the
 	// tokens are kept for the startup pattern-shape diagnostics, so the pattern
 	// is parsed exactly once.
 	let match: MatchFunction<RouteParams> | null = null;
 	let matchError: unknown;
-	let tokens: Token[] = [];
+	let tokens: readonly Token[] = [];
 	try {
 		const parsed = parsePattern(route.mountPath);
 		tokens = parsed.tokens;
