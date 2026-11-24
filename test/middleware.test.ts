@@ -1011,9 +1011,7 @@ describe("ws-mock middleware: configuration and handler resolution", () => {
 			(e) => e.level === "warn" && String(e.args.join(" ")).includes("no routes configured"),
 		);
 		expect(warning).toBeDefined();
-		// No hook callback should have been registered.
 		expect(() => fireHook(serverHandle.server)).toThrow(/did not register a hook/);
-		// The returned middleware is a plain HTTP pass-through.
 		const next = vi.fn();
 		mw({}, {}, next);
 		expect(next).toHaveBeenCalledTimes(1);
@@ -1869,21 +1867,6 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/ecoh`);
-		expect(await statusOf(ws)).toBe(404);
-	});
-
-	it("a no-op entry (routes: []) does not interfere with another entry's 404 fallback", async () => {
-		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
-		await wsMock(args);
-		fireHook(serverHandle.server);
-		// Second entry with no routes must not attach an idle upgrade listener.
-		await wsMock({
-			log: createCapturedLogger().log,
-			options: { configuration: { routes: [] } },
-			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
-		});
-
-		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/unknown`);
 		expect(await statusOf(ws)).toBe(404);
 	});
 

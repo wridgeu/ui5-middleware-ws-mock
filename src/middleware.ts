@@ -219,13 +219,12 @@ async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<
 				loadError: new Error(`handler module ${route.handler} has no default export`),
 			};
 		}
-		if (typeof mod.default !== "object" || Array.isArray(mod.default)) {
-			const kind = Array.isArray(mod.default) ? "array" : typeof mod.default;
+		if (typeof mod.default !== "object") {
 			return {
 				...base,
 				handler: null,
 				loadError: new Error(
-					`handler module ${route.handler} default export must be a handler object (got ${kind})`,
+					`handler module ${route.handler} default export must be a handler object (got ${typeof mod.default})`,
 				),
 			};
 		}
@@ -630,17 +629,13 @@ export default async function wsMock({
 	// Validate `rootPath` at the ui5.yaml trust boundary: an empty YAML key
 	// (`rootPath:`) parses as `null`, which would otherwise throw in `path.resolve`.
 	const rawRootPath: unknown = options.configuration?.rootPath;
-	let rootPathOverride: string | undefined;
-	if (rawRootPath !== undefined) {
-		if (typeof rawRootPath === "string") {
-			rootPathOverride = rawRootPath;
-		} else {
-			log.error(
-				"[ws-mock] `rootPath` must be a string; falling back to project source path:",
-				rawRootPath,
-			);
-		}
+	if (rawRootPath !== undefined && typeof rawRootPath !== "string") {
+		log.error(
+			"[ws-mock] `rootPath` must be a string; falling back to project source path:",
+			rawRootPath,
+		);
 	}
+	const rootPathOverride = typeof rawRootPath === "string" ? rawRootPath : undefined;
 
 	// Anchor handler resolution at the project's source path (or the configured
 	// rootPath override) so paths are independent of where `ui5 serve` was
@@ -741,7 +736,6 @@ export default async function wsMock({
 					log.warn("[ws-mock] terminate on shutdown threw:", err);
 				}
 			}
-			wss.close();
 			return closeServer(callback);
 		};
 
