@@ -16,6 +16,8 @@ on:
         paths:
             - "src/**"
             - "test/e2e/**"
+            - "ui5.yaml"
+            - "tsconfig.json"
             - "package.json"
             - "package-lock.json"
             - ".github/workflows/cli-validation.yml"

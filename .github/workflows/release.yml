@@ -50,6 +50,5 @@ jobs:
 
             - run: npm ci
 
-            - run: npm run build
-
+            # `prepublishOnly` runs check, build, and test before packing/publishing.
             - run: NODE_AUTH_TOKEN="" npm publish --provenance --access public
