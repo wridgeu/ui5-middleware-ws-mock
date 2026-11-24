@@ -219,6 +219,15 @@ async function loadHandler(handlerRoot: string, route: WebSocketRoute): Promise<
 				loadError: new Error(`handler module ${route.handler} has no default export`),
 			};
 		}
+		if (typeof mod.default !== "object") {
+			return {
+				...base,
+				handler: null,
+				loadError: new Error(
+					`handler module ${route.handler} default export must be a handler object (got ${typeof mod.default})`,
+				),
+			};
+		}
 		return { ...base, handler: mod.default };
 	} catch (loadError) {
 		return { ...base, handler: null, loadError };
@@ -610,21 +619,31 @@ export default async function wsMock({
 	);
 	if (routes.length === 0) {
 		log.warn("[ws-mock] no routes configured; middleware is a no-op");
+		// Return a plain pass-through without hooking the HTTP server: attaching an
+		// idle upgrade listener would bump `server.listenerCount("upgrade")` and
+		// disable another ws-mock entry's sole-listener 404 fallback, and skipping
+		// `getProject().getSourcePath()` avoids crashing on Module-type projects.
+		return (_req: unknown, _res: unknown, next: () => void) => next();
 	}
+
+	// Validate `rootPath` at the ui5.yaml trust boundary: an empty YAML key
+	// (`rootPath:`) parses as `null`, which would otherwise throw in `path.resolve`.
+	const rawRootPath: unknown = options.configuration?.rootPath;
+	if (rawRootPath !== undefined && typeof rawRootPath !== "string") {
+		log.error(
+			"[ws-mock] `rootPath` must be a string; falling back to project source path:",
+			rawRootPath,
+		);
+	}
+	const rootPathOverride = typeof rawRootPath === "string" ? rawRootPath : undefined;
 
 	// Anchor handler resolution at the project's source path (or the configured
 	// rootPath override) so paths are independent of where `ui5 serve` was
 	// launched from. See `resolveHandlerRoot` for the precedence rules.
-	// Resolve lazily: with no routes there's nothing to load, and skipping the
-	// resolve avoids crashing on Module-type projects (whose getSourcePath()
-	// throws) when this middleware is declared but unused.
-	const loaded: LoadedRoute[] = [];
-	if (routes.length > 0) {
-		const project = middlewareUtil.getProject();
-		const handlerRoot = resolveHandlerRoot(project, options.configuration?.rootPath);
-		log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
-		loaded.push(...(await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)))));
-	}
+	const project = middlewareUtil.getProject();
+	const handlerRoot = resolveHandlerRoot(project, rootPathOverride);
+	log.verbose(`[ws-mock] resolving handler paths against ${handlerRoot}`);
+	const loaded = await Promise.all(routes.map((r) => loadHandler(handlerRoot, r)));
 
 	// Report load status and warn about first-match-wins configuration hazards.
 	// Order is preserved (not collapsed into a path-keyed map) because matching
