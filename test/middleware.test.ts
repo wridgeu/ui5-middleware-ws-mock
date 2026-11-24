@@ -428,6 +428,32 @@ describe("ws-mock middleware: handler resilience and inbound handling", () => {
 		expect(closure.reason).toContain("handler unavailable");
 	});
 
+	it("closes with 1011 when handler default export is not a handler object", async () => {
+		const args = buildFactoryArgs(
+			"test/fixtures/handlers/function-default-export.ts",
+			"/ws/fn-default",
+		);
+		await wsMock(args);
+		fireHook(serverHandle.server);
+
+		expect(
+			args.entries.some(
+				(e) =>
+					e.level === "error" &&
+					String(e.args.join(" ")).includes("default export must be a handler object"),
+			),
+		).toBe(true);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/fn-default`);
+		const closure = await new Promise<{ code: number; reason: string }>((resolve) => {
+			ws.on("close", (code, reasonBuf) =>
+				resolve({ code, reason: reasonBuf.toString("utf8") }),
+			);
+		});
+		expect(closure.code).toBe(1011);
+		expect(closure.reason).toContain("handler unavailable");
+	});
+
 	it("closes with 1011 even when the client offered the PCP subprotocol", async () => {
 		const args = buildFactoryArgs("test/fixtures/handlers/broken-import.ts", "/ws/broken-pcp");
 		await wsMock(args);
@@ -973,23 +999,54 @@ describe("ws-mock middleware: parametrized mount paths", () => {
 });
 
 describe("ws-mock middleware: configuration and handler resolution", () => {
-	it("warns when no routes are configured", async () => {
+	it("warns when no routes are configured and returns a pass-through without hooking the server", async () => {
 		const { log, entries } = createCapturedLogger();
-		await wsMock({
+		const mw = (await wsMock({
 			log,
 			options: { configuration: { routes: [] } },
 			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
-		});
-		// Fire the hook so the empty-mountPaths fallback ("(none)") path runs.
-		fireHook(serverHandle.server);
+		})) as (req: unknown, res: unknown, next: () => void) => void;
+
 		const warning = entries.find(
 			(e) => e.level === "warn" && String(e.args.join(" ")).includes("no routes configured"),
 		);
 		expect(warning).toBeDefined();
-		const listening = entries.find(
-			(e) => e.level === "info" && String(e.args.join(" ")).includes("(none)"),
-		);
-		expect(listening).toBeDefined();
+		// No hook callback should have been registered.
+		expect(() => fireHook(serverHandle.server)).toThrow(/did not register a hook/);
+		// The returned middleware is a plain HTTP pass-through.
+		const next = vi.fn();
+		mw({}, {}, next);
+		expect(next).toHaveBeenCalledTimes(1);
+	});
+
+	it("non-string rootPath (e.g. empty YAML key parsed as null) logs an error and falls back to sourcePath", async () => {
+		const sourcePath = resolvePath(REPO_ROOT, "test");
+		const { log, entries } = createCapturedLogger();
+		await wsMock({
+			log,
+			options: {
+				configuration: {
+					rootPath: null as unknown as string,
+					routes: [{ mountPath: "/ws/nullroot", handler: "fixtures/handlers/echo.ts" }],
+				},
+			},
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT, sourcePath),
+		});
+		fireHook(serverHandle.server);
+
+		expect(
+			entries.some(
+				(e) =>
+					e.level === "error" &&
+					String(e.args.join(" ")).includes("`rootPath` must be a string"),
+			),
+		).toBe(true);
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/nullroot`);
+		const ready = waitForMessages(ws, 1);
+		await waitForOpen(ws);
+		expect((await ready)[0]).toBe("READY");
+		ws.close();
 	});
 
 	it("warns when duplicate mountPaths are declared and the earlier route wins (first-match-wins)", async () => {
@@ -1812,6 +1869,21 @@ describe("ws-mock middleware: unclaimed upgrades, lifecycle and config boundary"
 		fireHook(serverHandle.server);
 
 		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/ecoh`);
+		expect(await statusOf(ws)).toBe(404);
+	});
+
+	it("a no-op entry (routes: []) does not interfere with another entry's 404 fallback", async () => {
+		const args = buildFactoryArgs("test/fixtures/handlers/echo.ts", "/ws/echo");
+		await wsMock(args);
+		fireHook(serverHandle.server);
+		// Second entry with no routes must not attach an idle upgrade listener.
+		await wsMock({
+			log: createCapturedLogger().log,
+			options: { configuration: { routes: [] } },
+			middlewareUtil: createMiddlewareUtil(REPO_ROOT),
+		});
+
+		const ws = new WebSocket(`ws://127.0.0.1:${serverHandle.port}/ws/unknown`);
 		expect(await statusOf(ws)).toBe(404);
 	});
 
