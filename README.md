@@ -2,7 +2,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://www.npmjs.com/package/ui5-middleware-ws-mock"><img src="https://img.shields.io/npm/v/ui5-middleware-ws-mock.svg" alt="npm"></a>
   <a href="https://npmx.dev/package/ui5-middleware-ws-mock"><img src="https://img.shields.io/npm/v/ui5-middleware-ws-mock?label=npmx.dev&color=0a0a0a" alt="npmx"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%E2%89%A522.18-green.svg" alt="Node"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node-%E2%89%A524-green.svg" alt="Node"></a>
   <a href="https://ui5.github.io/cli/stable/pages/Configuration/"><img src="https://img.shields.io/badge/UI5%20Tooling%20specVersion-4.0-blue.svg" alt="UI5 Tooling specVersion"></a>
   <a href="https://www.npmjs.com/package/@ui5/cli"><img src="https://img.shields.io/badge/%40ui5%2Fcli-%E2%89%A54.0.0-blue.svg" alt="UI5 CLI"></a>
 </p>
@@ -38,16 +38,16 @@ The transport is plain WebSocket. When the client offers it, the middleware also
 
 ## Prerequisites
 
-- **Node.js** ≥ 22.18 (declared in `engines`; required for the native TypeScript type stripping the handler loader relies on when handlers are authored in TS).
+- **Node.js** ≥ 24 (declared in `engines`; includes native TypeScript type stripping, which the handler loader relies on when handlers are authored in TS).
 - **`@ui5/cli`** ≥ 4.0.0 (this middleware declares `specVersion: "4.0"`; older CLI versions reject the extension).
 - A UI5 project of `kind: project`, `type: application` / `library` / `themeLibrary`. `Module`-type projects need `configuration.rootPath` because they have no single source path.
-- TypeScript is not required to use the middleware; handlers may be plain `.js` files. If you write handlers in TypeScript, Node ≥ 22.18 runs them directly via native type stripping; no `ts-node` step is needed.
+- TypeScript is not required to use the middleware; handlers may be plain `.js` files. If you write handlers in TypeScript, Node ≥ 24 runs them directly via native type stripping; no `ts-node` step is needed.
 
 ## Version compatibility
 
-| `ui5-middleware-ws-mock` | UI5 Tooling specVersion | `@ui5/cli` | Node      | TypeScript (optional) |
-| ------------------------ | ----------------------- | ---------- | --------- | --------------------- |
-| `0.x`                    | `4.0`                   | `≥ 4.0.0`  | `≥ 22.18` | `~ 7.0`               |
+| `ui5-middleware-ws-mock` | UI5 Tooling specVersion | `@ui5/cli` | Node   | TypeScript (optional) |
+| ------------------------ | ----------------------- | ---------- | ------ | --------------------- |
+| `0.x`                    | `4.0`                   | `≥ 4.0.0`  | `≥ 24` | `~ 7.0`               |
 
 Pre-1.0 the public types and the middleware configuration shape may change in minor releases. Note that for `0.x` versions npm semver treats the minor as the major: `^0.3.0` and `~0.3.0` resolve to the same range (`>=0.3.0 <0.4.0`), so either form pins to the current minor.
 
